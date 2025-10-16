@@ -18,40 +18,58 @@ const Marketplace: React.FC = () => {
   const [buyingListingId, setBuyingListingId] = useState<number | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
 
+  // Reset marketplace data when wallet changes
+  useEffect(() => {
+    if (!sdk || !account) {
+      console.log('Marketplace: Clearing data due to wallet change');
+      setListedDomains([]);
+      setTotalListings(0);
+      setCurrentPage(1);
+      setError(null);
+    }
+  }, [sdk, account]);
+
   // Load total active count first
   useEffect(() => {
-    if (sdk) {
+    if (sdk && account) { // Only load when both SDK and account are available
+      console.log('Marketplace: SDK and account available, loading total count');
       loadTotalCount();
+    } else {
+      console.log('Marketplace: SDK or account not available:', { hasSDK: !!sdk, hasAccount: !!account });
     }
-  }, [sdk]);
+  }, [sdk, account]);
 
   // Load page data when page changes
   useEffect(() => {
-    if (sdk && totalListings > 0) {
+    if (sdk && account && totalListings > 0) { // Only load when all required data is available
       loadCurrentPage();
-    } else if (sdk) {
+    } else if (sdk && account) {
       setIsLoading(false);
     }
-  }, [sdk, currentPage, totalListings]);
+  }, [sdk, account, currentPage, totalListings]);
 
   const loadTotalCount = async () => {
-    if (!sdk) return;
+    if (!sdk || isLoading) return; // Prevent multiple simultaneous calls
     
     setIsLoading(true);
     try {
+      console.log('Loading total listing count...');
       // Count only active listings (scan-based)
       const count = await sdk.getActiveListingCount();
+      console.log('Total listings count:', count);
 
       setTotalListings(count);
       setCurrentPage(1);
     } catch (err: any) {
       console.error('Error loading count:', err);
       setError('Failed to load listing count');
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const loadCurrentPage = async () => {
-    if (!sdk) return;
+    if (!sdk || isLoading) return; // Prevent multiple simultaneous calls
 
     setIsLoading(true);
     setError(null);

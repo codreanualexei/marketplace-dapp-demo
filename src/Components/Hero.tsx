@@ -1,5 +1,5 @@
-import React from 'react';
-import { useWallet } from '../contexts/WalletContext';
+import React, { useState } from 'react';
+import { useWallet, WalletType } from '../contexts/WalletContext';
 import './Hero.css';
 
 interface HeroProps {
@@ -7,7 +7,13 @@ interface HeroProps {
 }
 
 const Hero: React.FC<HeroProps> = ({ onNavigate }) => {
-  const { account, connectWallet } = useWallet();
+  const { account, connectWallet, isConnecting } = useWallet();
+  const [showWalletOptions, setShowWalletOptions] = useState(false);
+
+  const handleWalletConnect = async (walletType: WalletType) => {
+    setShowWalletOptions(false);
+    await connectWallet(walletType);
+  };
 
   return (
     <section className="hero">
@@ -23,9 +29,33 @@ const Hero: React.FC<HeroProps> = ({ onNavigate }) => {
           </p>
           <div className="hero-actions">
             {!account ? (
-              <button className="hero-button primary" onClick={connectWallet}>
-                Connect Wallet
-              </button>
+              <div className="hero-wallet-connect">
+                <button 
+                  className="hero-button primary" 
+                  onClick={() => setShowWalletOptions(!showWalletOptions)}
+                  disabled={isConnecting}
+                >
+                  {isConnecting ? 'Connecting...' : 'Connect Wallet'}
+                </button>
+                {showWalletOptions && (
+                  <div className="hero-wallet-options">
+                    <button 
+                      className="hero-wallet-option"
+                      onClick={() => handleWalletConnect('metamask')}
+                      disabled={isConnecting}
+                    >
+                      🦊 MetaMask
+                    </button>
+                    <button 
+                      className="hero-wallet-option"
+                      onClick={() => handleWalletConnect('walletconnect')}
+                      disabled={isConnecting}
+                    >
+                      🔗 WalletConnect
+                    </button>
+                  </div>
+                )}
+              </div>
             ) : (
               <>
                 <button 

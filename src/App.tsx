@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { WalletProvider } from './contexts/WalletContext';
+import WalletConnectErrorBoundary from './Components/WalletConnectErrorBoundary';
+import GlobalErrorHandler from './Components/GlobalErrorHandler';
 import Header from './Components/Header';
 import NetworkChecker from './Components/NetworkChecker';
 import Home from './Pages/Home';
@@ -36,13 +38,17 @@ function App() {
   };
 
   return (
-    <WalletProvider>
-      <div className="App">
-        <Header currentPage={currentPage} onNavigate={setCurrentPage} />
-        <NetworkChecker />
-        {renderPage()}
-      </div>
-    </WalletProvider>
+    <GlobalErrorHandler>
+      <WalletConnectErrorBoundary>
+        <WalletProvider>
+          <div className="App">
+            <Header currentPage={currentPage} onNavigate={setCurrentPage} />
+            <NetworkChecker />
+            {renderPage()}
+          </div>
+        </WalletProvider>
+      </WalletConnectErrorBoundary>
+    </GlobalErrorHandler>
   );
 }
 

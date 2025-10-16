@@ -19,7 +19,7 @@ const IS_DEV = process.env.NODE_ENV === 'development';
  * Returns null if wallet is not connected
  */
 export const useMarketplaceSDK = (): MarketplaceSDK | null => {
-  const { signer } = useWallet();
+  const { signer, provider, account, walletType } = useWallet();
 
   const sdk = useMemo(() => {
     if (!MARKETPLACE_ADDRESS || !NFT_ADDRESS) {
@@ -37,25 +37,34 @@ export const useMarketplaceSDK = (): MarketplaceSDK | null => {
     }
 
     try {
-      if (signer) {
+      // Only create SDK if we have a valid signer and account
+      if (signer && account && provider) {
+        console.log('Creating Marketplace SDK with:', {
+          walletType,
+          account,
+          hasSigner: !!signer,
+          hasProvider: !!provider
+        });
         return new MarketplaceSDK(signer, MARKETPLACE_ADDRESS, NFT_ADDRESS, IS_DEV);
       }
 
-      // Read-only fallback using RPC URL if available
+      // Read-only fallback using RPC URL if available (for when wallet is not connected)
       const rpcUrl = process.env.REACT_APP_RPC_URL;
       if (rpcUrl) {
+        console.log('Creating read-only Marketplace SDK with RPC provider');
         const provider = new ethers.JsonRpcProvider(rpcUrl);
         // Create a dummy wallet connected to provider; avoids provider.getSigner() which throws on public RPC
         const readOnlySigner = ethers.Wallet.createRandom().connect(provider);
         return new MarketplaceSDK(readOnlySigner, MARKETPLACE_ADDRESS, NFT_ADDRESS, IS_DEV);
       }
 
+      console.log('No valid signer or RPC URL available for Marketplace SDK');
       return null;
     } catch (error) {
       console.error('Error creating Marketplace SDK:', error);
       return null;
     }
-  }, [signer]);
+  }, [signer, provider, account, walletType]);
 
   return sdk;
 };

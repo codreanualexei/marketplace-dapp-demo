@@ -6,10 +6,13 @@ const AMOY_CHAIN_ID = 80002;
 const AMOY_CHAIN_ID_HEX = '0x13882';
 
 const NetworkChecker: React.FC = () => {
-  const { chainId, account } = useWallet();
+  const { chainId, account, switchNetwork, walletType, isNetworkSwitching } = useWallet();
   const [showBanner, setShowBanner] = useState(false);
+  const [isSwitching, setIsSwitching] = useState(false);
+  const [showManualHelp, setShowManualHelp] = useState(false);
 
   useEffect(() => {
+    console.log('NetworkChecker useEffect:', { account, chainId, AMOY_CHAIN_ID, shouldShow: account && chainId && chainId !== AMOY_CHAIN_ID });
     if (account && chainId && chainId !== AMOY_CHAIN_ID) {
       setShowBanner(true);
     } else {
@@ -18,45 +21,34 @@ const NetworkChecker: React.FC = () => {
   }, [chainId, account]);
 
   const switchToAmoy = async () => {
-    if (typeof window.ethereum === 'undefined') {
-      alert('Please install MetaMask');
-      return;
-    }
-
+    console.log('switchToAmoy button clicked', { chainId, walletType, account });
+    setIsSwitching(true);
     try {
-      // Try to switch to Amoy
-      await window.ethereum.request({
-        method: 'wallet_switchEthereumChain',
-        params: [{ chainId: AMOY_CHAIN_ID_HEX }],
-      });
-    } catch (switchError: any) {
-      // This error code indicates that the chain has not been added to MetaMask
-      if (switchError.code === 4902) {
-        try {
-          await window.ethereum.request({
-            method: 'wallet_addEthereumChain',
-            params: [
-              {
-                chainId: AMOY_CHAIN_ID_HEX,
-                chainName: 'Polygon Amoy Testnet',
-                nativeCurrency: {
-                  name: 'MATIC',
-                  symbol: 'MATIC',
-                  decimals: 18,
-                },
-                rpcUrls: ['https://rpc-amoy.polygon.technology'],
-                blockExplorerUrls: ['https://amoy.polygonscan.com/'],
-              },
-            ],
-          });
-        } catch (addError) {
-          console.error('Error adding network:', addError);
-          alert('Failed to add Polygon Amoy network. Please add it manually.');
+      console.log('Calling switchNetwork with AMOY_CHAIN_ID:', AMOY_CHAIN_ID);
+      await switchNetwork(AMOY_CHAIN_ID);
+      console.log('switchNetwork call completed');
+      
+      // Show success message briefly
+      setTimeout(() => {
+        if (chainId === AMOY_CHAIN_ID) {
+          console.log('Successfully switched to Polygon Amoy');
         }
+      }, 2000);
+      
+    } catch (error: any) {
+      console.error('Error switching network:', error);
+      
+      // Show more helpful error message based on the actual error
+      let errorMessage = error.message || 'Failed to switch network.';
+      
+      // If it's a user rejection, don't show alert
+      if (errorMessage.includes('cancelled by user')) {
+        console.log('User cancelled network switch');
       } else {
-        console.error('Error switching network:', switchError);
-        alert('Failed to switch network. Please switch manually in MetaMask.');
+        alert(errorMessage);
       }
+    } finally {
+      setIsSwitching(false);
     }
   };
 
@@ -71,13 +63,52 @@ const NetworkChecker: React.FC = () => {
         <div className="banner-text">
           <strong>Wrong Network!</strong>
           <p>
-            You're on {chainId ? `Chain ID ${chainId}` : 'wrong network'}. 
+            You're on {chainId ? `Chain ID ${chainId}` : 'wrong network'} using {walletType || 'wallet'}. 
             This marketplace requires <strong>Polygon Amoy (Chain ID: 80002)</strong>
           </p>
+          {walletType === 'walletconnect' && (
+            <p className="walletconnect-help">
+              💡 <strong>Mobile Wallet Tip:</strong> If automatic switching doesn't work, 
+              manually switch to Polygon Amoy in your wallet app.
+            </p>
+          )}
         </div>
-        <button className="switch-button" onClick={switchToAmoy}>
-          Switch to Amoy
-        </button>
+        <div className="switch-actions">
+          <button 
+            className="switch-button" 
+            onClick={switchToAmoy}
+            disabled={isSwitching || isNetworkSwitching}
+          >
+            {isSwitching || isNetworkSwitching ? 'Switching...' : 'Switch to Amoy'}
+          </button>
+          {walletType === 'walletconnect' && (
+            <button 
+              className="help-button"
+              onClick={() => setShowManualHelp(!showManualHelp)}
+            >
+              {showManualHelp ? 'Hide Help' : 'Need Help?'}
+            </button>
+          )}
+        </div>
+        
+        {showManualHelp && walletType === 'walletconnect' && (
+          <div className="manual-help">
+            <h4>Manual Network Setup for Mobile Wallets:</h4>
+            <div className="network-config">
+              <p><strong>Network Name:</strong> Polygon Amoy Testnet</p>
+              <p><strong>RPC URL:</strong> https://rpc-amoy.polygon.technology</p>
+              <p><strong>Chain ID:</strong> 80002</p>
+              <p><strong>Currency Symbol:</strong> MATIC</p>
+              <p><strong>Block Explorer:</strong> https://amoy.polygonscan.com/</p>
+            </div>
+            <p className="help-instructions">
+              1. Open your wallet app<br/>
+              2. Go to Settings → Networks<br/>
+              3. Add a custom network with the details above<br/>
+              4. Switch to the new network
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );
