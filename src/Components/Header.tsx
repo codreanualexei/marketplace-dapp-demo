@@ -30,49 +30,49 @@ const Header: React.FC<HeaderProps> = ({ currentPage, onNavigate }) => {
         </button>
 
         <nav className={`header-nav ${mobileMenuOpen ? 'mobile-open' : ''}`}>
-          <a 
+          <button 
             className={`nav-link ${currentPage === 'home' ? 'active' : ''}`}
             onClick={() => handleNavClick('home')}
           >
             Home
-          </a>
-          <a 
+          </button>
+          <button 
             className={`nav-link ${currentPage === 'marketplace' ? 'active' : ''}`}
             onClick={() => handleNavClick('marketplace')}
           >
             Marketplace
-          </a>
-          <a 
+          </button>
+          <button 
             className={`nav-link ${currentPage === 'my-domains' ? 'active' : ''}`}
             onClick={() => handleNavClick('my-domains')}
           >
             My Domains
-          </a>
-          <a 
+          </button>
+          <button 
             className={`nav-link ${currentPage === 'my-listings' ? 'active' : ''}`}
             onClick={() => handleNavClick('my-listings')}
           >
             My Listings
-          </a>
-          <a 
+          </button>
+          <button 
             className={`nav-link ${currentPage === 'royalties' ? 'active' : ''}`}
             onClick={() => handleNavClick('royalties')}
           >
             Royalties
-          </a>
-          <a 
+          </button>
+          <button 
             className={`nav-link ${currentPage === 'mint' ? 'active' : ''}`}
             onClick={() => handleNavClick('mint')}
           >
             Mint
-          </a>
-          <a 
+          </button>
+          <button 
             className={`nav-link ${currentPage === 'debug' ? 'active' : ''}`}
             onClick={() => handleNavClick('debug')}
             style={{ opacity: 0.7 }}
           >
             🔧
-          </a>
+          </button>
         </nav>
 
         <div className="header-actions">

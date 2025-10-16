@@ -3,7 +3,6 @@ import { useWallet } from '../contexts/WalletContext';
 import './NetworkChecker.css';
 
 const AMOY_CHAIN_ID = 80002;
-const AMOY_CHAIN_ID_HEX = '0x13882';
 
 const NetworkChecker: React.FC = () => {
   const { chainId, account, switchNetwork, walletType, isNetworkSwitching } = useWallet();
@@ -12,7 +11,6 @@ const NetworkChecker: React.FC = () => {
   const [showManualHelp, setShowManualHelp] = useState(false);
 
   useEffect(() => {
-    console.log('NetworkChecker useEffect:', { account, chainId, AMOY_CHAIN_ID, shouldShow: account && chainId && chainId !== AMOY_CHAIN_ID });
     if (account && chainId && chainId !== AMOY_CHAIN_ID) {
       setShowBanner(true);
     } else {
@@ -21,20 +19,9 @@ const NetworkChecker: React.FC = () => {
   }, [chainId, account]);
 
   const switchToAmoy = async () => {
-    console.log('switchToAmoy button clicked', { chainId, walletType, account });
     setIsSwitching(true);
     try {
-      console.log('Calling switchNetwork with AMOY_CHAIN_ID:', AMOY_CHAIN_ID);
       await switchNetwork(AMOY_CHAIN_ID);
-      console.log('switchNetwork call completed');
-      
-      // Show success message briefly
-      setTimeout(() => {
-        if (chainId === AMOY_CHAIN_ID) {
-          console.log('Successfully switched to Polygon Amoy');
-        }
-      }, 2000);
-      
     } catch (error: any) {
       console.error('Error switching network:', error);
       
@@ -42,9 +29,7 @@ const NetworkChecker: React.FC = () => {
       let errorMessage = error.message || 'Failed to switch network.';
       
       // If it's a user rejection, don't show alert
-      if (errorMessage.includes('cancelled by user')) {
-        console.log('User cancelled network switch');
-      } else {
+      if (!errorMessage.includes('cancelled by user')) {
         alert(errorMessage);
       }
     } finally {

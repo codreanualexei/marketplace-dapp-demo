@@ -45,15 +45,49 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
   const [walletConnectProvider, setWalletConnectProvider] = useState<any>(null);
   const [isNetworkSwitching, setIsNetworkSwitching] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
-  const [lastConnectionAttempt, setLastConnectionAttempt] = useState<number>(0);
-  
   // Store WalletConnect provider globally to prevent multiple initializations
   const [wcProviderInstance, setWcProviderInstance] = useState<any>(null);
-  
-  // Global variable to track WalletConnect initialization state
-  let isWalletConnectInitializing = false;
 
-  // Removed error suppression - implementing proper error handling instead
+  // Comprehensive WalletConnect cleanup function
+  const cleanupWalletConnect = async () => {
+    try {
+      // Disconnect existing provider if it exists
+      if (wcProviderInstance) {
+        try {
+          await wcProviderInstance.disconnect();
+        } catch (disconnectError) {
+          // Ignore disconnect errors as they're usually harmless
+        }
+      }
+
+      // Clear all WalletConnect related state
+      setWcProviderInstance(null);
+      setWalletConnectProvider(null);
+      
+      // Clear WalletConnect from localStorage and sessionStorage
+      const clearStorage = (storage: Storage) => {
+        const keysToRemove = [];
+        for (let i = 0; i < storage.length; i++) {
+          const key = storage.key(i);
+          if (key && (key.startsWith('walletconnect') || key.startsWith('wc@'))) {
+            keysToRemove.push(key);
+          }
+        }
+        keysToRemove.forEach(key => storage.removeItem(key));
+      };
+
+      clearStorage(localStorage);
+      clearStorage(sessionStorage);
+      
+      // Add a delay to ensure cleanup completes before next connection
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    } catch (error) {
+      console.error('Error during WalletConnect cleanup:', error);
+      // Even if cleanup fails, we should clear the state
+      setWcProviderInstance(null);
+      setWalletConnectProvider(null);
+    }
+  };
 
   const updateBalance = async (address: string, provider: ethers.BrowserProvider) => {
     // Skip balance update if we're in the middle of a network switch
@@ -82,10 +116,18 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
     setError(null);
 
     try {
+      // Always clean up WalletConnect before connecting any wallet
+      await cleanupWalletConnect();
+      
       if (walletType === 'metamask') {
         await connectMetaMask();
       } else if (walletType === 'walletconnect') {
-        await connectWalletConnect();
+        // For WalletConnect, force a page reload to ensure completely clean state
+        // This is necessary because WalletConnect Core maintains global state that can't be easily reset
+        console.log('Connecting to WalletConnect - forcing page reload for clean state');
+        localStorage.setItem('pendingWalletConnect', 'true');
+        window.location.reload();
+        return;
       }
     } catch (err: any) {
       console.error('Error connecting wallet:', err);
@@ -169,16 +211,8 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
       throw new Error('Connection already in progress. Please wait for the current connection to complete.');
     }
 
-    // Prevent rapid successive connection attempts (minimum 2 seconds between attempts)
-    const now = Date.now();
-    if (now - lastConnectionAttempt < 2000) {
-      throw new Error('Please wait a moment before trying to connect again.');
-    }
-    setLastConnectionAttempt(now);
-
     try {
       setIsConnecting(true);
-      console.log('Starting WalletConnect connection...');
       
       // Create WalletConnect provider
       const projectId = process.env.REACT_APP_WALLETCONNECT_PROJECT_ID;
@@ -186,87 +220,53 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
         throw new Error('WalletConnect Project ID not configured. Please set REACT_APP_WALLETCONNECT_PROJECT_ID in your environment variables.');
       }
 
-      // Clean up existing provider if any
-      if (wcProviderInstance) {
-        try {
-          console.log('Cleaning up existing WalletConnect provider...');
-          await wcProviderInstance.disconnect();
-          setWcProviderInstance(null);
-          setWalletConnectProvider(null);
-        } catch (cleanupError) {
-          console.log('Error during cleanup (this is usually fine):', cleanupError);
-          setWcProviderInstance(null);
-          setWalletConnectProvider(null);
-        }
-      }
-
-      let wcProvider = wcProviderInstance;
-      
-      // Only initialize if not already initialized and not currently initializing
-      if (!wcProvider && !isWalletConnectInitializing) {
-        console.log('Initializing WalletConnect provider...');
-        isWalletConnectInitializing = true;
-        
-        try {
-          wcProvider = await EthereumProvider.init({
-            projectId: projectId,
-            chains: [1, 137, 56, 43114, 80002], // Ethereum, Polygon, BSC, Avalanche, Polygon Amoy
-            showQrModal: true,
-            metadata: {
-              name: 'STR Domains Marketplace',
-              description: 'Decentralized marketplace for STR domains',
-              url: window.location.origin,
-              icons: [`${window.location.origin}/logo192.png`]
-            },
-            relayUrl: 'wss://relay.walletconnect.com',
-            qrModalOptions: {
-              themeMode: 'light',
-              themeVariables: {
-                '--wcm-z-index': '1000'
-              }
-            },
-            disableProviderPing: true,
-            optionalChains: [80002],
-            events: ['session_request', 'session_update', 'session_delete'],
-            methods: ['eth_sendTransaction', 'eth_signTransaction', 'eth_sign', 'personal_sign', 'eth_signTypedData'],
-          });
-          setWcProviderInstance(wcProvider);
-          isWalletConnectInitializing = false;
-        } catch (initError: any) {
-          isWalletConnectInitializing = false;
-          console.error('Error initializing WalletConnect provider:', initError);
-          if (initError.message?.includes('already initialized')) {
-            console.log('WalletConnect already initialized, continuing...');
-            wcProvider = wcProviderInstance;
-          } else {
-            throw initError;
+      // Create WalletConnect provider configuration
+      const wcConfig = {
+        projectId: projectId,
+        chains: [1, 137, 56, 43114, 80002], // Ethereum, Polygon, BSC, Avalanche, Polygon Amoy
+        showQrModal: true,
+        metadata: {
+          name: 'STR Domains Marketplace',
+          description: 'Decentralized marketplace for STR domains',
+          url: window.location.origin,
+          icons: [`${window.location.origin}/logo192.png`]
+        },
+        relayUrl: 'wss://relay.walletconnect.com',
+        qrModalOptions: {
+          themeMode: 'light' as const,
+          themeVariables: {
+            '--wcm-z-index': '1000'
           }
+        },
+        disableProviderPing: true,
+        optionalChains: [80002] as [number, ...number[]],
+        events: ['session_request', 'session_update', 'session_delete'],
+        methods: ['eth_sendTransaction', 'eth_signTransaction', 'eth_sign', 'personal_sign', 'eth_signTypedData'],
+      };
+
+      let wcProvider;
+      try {
+        wcProvider = await EthereumProvider.init(wcConfig);
+        setWcProviderInstance(wcProvider);
+      } catch (initError: any) {
+        // If we get "already initialized" error, this is expected and we should continue
+        if (initError.message?.includes('already initialized')) {
+          // The global Core is already initialized, we can continue
+          wcProvider = await EthereumProvider.init(wcConfig);
+          setWcProviderInstance(wcProvider);
+        } else {
+          throw initError;
         }
-      } else if (isWalletConnectInitializing) {
-        console.log('WalletConnect is currently initializing, waiting...');
-        // Wait for initialization to complete
-        let attempts = 0;
-        while (isWalletConnectInitializing && attempts < 50) {
-          await new Promise(resolve => setTimeout(resolve, 100));
-          attempts++;
-        }
-        wcProvider = wcProviderInstance;
-      } else {
-        console.log('Using existing WalletConnect provider instance');
       }
 
-      console.log('WalletConnect provider initialized, enabling session...');
-      // Enable session (triggers QR Code modal) with comprehensive error handling
+      // Enable session (triggers QR Code modal)
       try {
         await wcProvider.enable();
       } catch (enableError: any) {
-        console.error('Error enabling WalletConnect session:', enableError);
-        // If session enable fails, try to clean up and throw the error
         setWcProviderInstance(null);
         throw enableError;
       }
 
-      console.log('WalletConnect session enabled, setting up ethers provider...');
       // Create ethers provider from WalletConnect provider
       const browserProvider = new ethers.BrowserProvider(wcProvider);
       const accounts = await browserProvider.listAccounts();
@@ -277,11 +277,6 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
 
       const userSigner = await browserProvider.getSigner();
       const network = await browserProvider.getNetwork();
-      
-      console.log('WalletConnect connected:', {
-        account: accounts[0].address,
-        chainId: Number(network.chainId)
-      });
       
       setProvider(browserProvider);
       setSigner(userSigner);
@@ -295,31 +290,27 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
       // Store preferred wallet type
       localStorage.setItem('preferredWallet', 'walletconnect');
       localStorage.removeItem('walletDisconnected');
-      
-        console.log('WalletConnect connection completed successfully');
-        } catch (error: any) {
-          console.error('WalletConnect connection error:', error);
-          if (error.message?.includes('User rejected')) {
-            throw new Error('Connection cancelled by user');
-          } else if (error.message?.includes('Connection request reset') || 
-                     error.message?.includes('Please try again') ||
-                     error.message?.includes('connection was reset') ||
-                     error.message?.includes('request was reset')) {
-            throw new Error('Connection request was reset. Please try connecting again.');
-          } else if (error.message?.includes('No matching key. session topic doesn\'t exist')) {
-            throw new Error('WalletConnect session expired. Please try connecting again.');
-          } else if (error.message?.includes('already initialized')) {
-            throw new Error('WalletConnect is already initializing. Please wait and try again.');
-          }
-          throw error;
+    } catch (error: any) {
+      console.error('WalletConnect connection error:', error);
+      if (error.message?.includes('User rejected')) {
+        throw new Error('Connection cancelled by user');
+      } else if (error.message?.includes('Connection request reset') || 
+                 error.message?.includes('Please try again') ||
+                 error.message?.includes('connection was reset') ||
+                 error.message?.includes('request was reset')) {
+        throw new Error('Connection request was reset. Please try connecting again.');
+      } else if (error.message?.includes('No matching key. session topic doesn\'t exist')) {
+        throw new Error('WalletConnect session expired. Please try connecting again.');
+      } else if (error.message?.includes('already initialized')) {
+        throw new Error('WalletConnect is already initializing. Please wait and try again.');
+      }
+      throw error;
     } finally {
       setIsConnecting(false);
     }
   };
 
   const switchNetwork = async (targetChainId: number) => {
-    console.log('switchNetwork called:', { targetChainId, walletType, account });
-    
     if (!walletType) {
       throw new Error('No wallet connected');
     }
@@ -329,16 +320,12 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
     
     try {
       if (walletType === 'metamask') {
-        console.log('Switching MetaMask network to:', targetChainId);
         await switchMetaMaskNetwork(targetChainId);
       } else if (walletType === 'walletconnect') {
-        console.log('Switching WalletConnect network to:', targetChainId);
         await switchWalletConnectNetwork(targetChainId);
       } else {
         throw new Error(`Unsupported wallet type: ${walletType}`);
       }
-      
-      console.log('Network switch completed successfully');
     } finally {
       // Clear network switching flag after a delay to allow provider to stabilize
       setTimeout(() => {
@@ -378,7 +365,6 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
       throw new Error('MetaMask not detected');
     }
 
-    const chainIdHex = `0x${chainId.toString(16)}`;
     const networkConfig = getNetworkConfig(chainId);
 
     await window.ethereum.request({
@@ -492,17 +478,8 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
   const disconnectWallet = useCallback(async () => {
     console.log('Disconnecting wallet:', walletType);
     
-    // Disconnect WalletConnect if it's connected
-    if (walletConnectProvider && walletType === 'walletconnect') {
-      try {
-        console.log('Disconnecting WalletConnect provider...');
-        await walletConnectProvider.disconnect();
-        console.log('WalletConnect provider disconnected successfully');
-      } catch (error) {
-        console.error('Error disconnecting WalletConnect:', error);
-        // Even if disconnect fails, we should clear the state
-      }
-    }
+    // Use comprehensive cleanup for WalletConnect
+    await cleanupWalletConnect();
 
     // Clear all wallet state
     setAccount(null);
@@ -513,7 +490,6 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
     setError(null);
     setWalletType(null);
     setWalletConnectProvider(null);
-    setWcProviderInstance(null); // Clear the global instance
     setIsNetworkSwitching(false); // Reset network switching state
     
     // Store disconnect state with wallet type to prevent auto-connect
@@ -521,7 +497,7 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
     localStorage.removeItem('preferredWallet');
     
     console.log('Wallet disconnected successfully');
-  }, [walletConnectProvider, walletType]);
+  }, [walletType]);
 
   // Listen for account changes
   useEffect(() => {
@@ -565,7 +541,6 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
     // WalletConnect event listeners
     if (walletConnectProvider && walletType === 'walletconnect') {
       const handleAccountsChanged = (accounts: string[]) => {
-        console.log('WalletConnect accounts changed:', accounts);
         if (accounts.length === 0 && !isNetworkSwitching) {
           // Only disconnect if we're not in the middle of a network switch
           disconnectWallet();
@@ -578,28 +553,23 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
       };
 
       const handleChainChanged = (chainId: number | string) => {
-        console.log('WalletConnect chain changed:', chainId);
         // Ensure chainId is always a number
         const numericChainId = typeof chainId === 'string' ? parseInt(chainId, 16) : chainId;
         setChainId(numericChainId);
         
         // Don't update balance immediately - let the network switch process handle it
-        console.log('WalletConnect network changed to:', numericChainId);
       };
 
       const handleDisconnect = () => {
-        console.log('WalletConnect disconnected');
         disconnectWallet();
       };
 
       const handleSessionUpdate = (session: any) => {
-        console.log('WalletConnect session updated:', session);
         // Don't disconnect on session updates, just log them
         // Session updates are normal and shouldn't cause disconnection
       };
       
       const handleSessionExpire = () => {
-        console.log('WalletConnect session expired');
         // Only disconnect if not in the middle of a network switch
         if (!isNetworkSwitching) {
           disconnectWallet();
@@ -629,12 +599,23 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
   // Auto-connect if previously connected
   useEffect(() => {
     const checkConnection = async () => {
+      // Check if there's a pending WalletConnect connection after page reload
+      const pendingWalletConnect = localStorage.getItem('pendingWalletConnect');
+      if (pendingWalletConnect === 'true') {
+        localStorage.removeItem('pendingWalletConnect');
+        try {
+          await connectWalletConnect();
+          return;
+        } catch (error) {
+          setError('Failed to connect to WalletConnect. Please try again.');
+        }
+      }
+
       // Only auto-connect if not explicitly disconnected and no account is connected
       if (localStorage.getItem('walletDisconnected') === 'true' || account) {
         return;
       }
 
-      console.log('Attempting auto-connect...');
       const preferredWallet = localStorage.getItem('preferredWallet');
       
       // Try preferred wallet first, then fallback to both
@@ -643,13 +624,11 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
       for (const walletType of walletsToTry) {
         if (walletType === 'metamask' && typeof window.ethereum !== 'undefined') {
           try {
-            console.log('Checking MetaMask connection...');
             
             // First check if MetaMask is unlocked and has accounts
             const accounts = await window.ethereum.request({ method: 'eth_accounts' });
             
             if (accounts.length > 0) {
-              console.log('MetaMask has accounts, attempting auto-connect...');
               const browserProvider = new ethers.BrowserProvider(window.ethereum);
               
               try {
@@ -663,18 +642,10 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
                 setWalletType('metamask');
                 
                 await updateBalance(accounts[0], browserProvider);
-                
-                console.log('MetaMask auto-connected successfully:', {
-                  account: accounts[0],
-                  chainId: Number(network.chainId)
-                });
                 return; // Exit early if MetaMask connected
               } catch (signerError: any) {
-                console.log('MetaMask signer error (likely locked):', signerError.message);
                 // MetaMask is likely locked, skip auto-connect
               }
-            } else {
-              console.log('MetaMask has no accounts or is locked');
             }
           } catch (err) {
             console.error('Error checking MetaMask connection:', err);
@@ -683,7 +654,6 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
         
         if (walletType === 'walletconnect') {
           try {
-            console.log('Checking WalletConnect session...');
             const projectId = process.env.REACT_APP_WALLETCONNECT_PROJECT_ID;
             if (projectId) {
               
@@ -701,7 +671,7 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
                     url: window.location.origin,
                     icons: [`${window.location.origin}/logo192.png`]
                   },
-                  optionalChains: [80002], // Make Amoy optional for better compatibility
+                  optionalChains: [80002] as [number, ...number[]], // Make Amoy optional for better compatibility
                   // Additional configuration to prevent session errors
                   events: ['session_request', 'session_update', 'session_delete'],
                   methods: ['eth_sendTransaction', 'eth_signTransaction', 'eth_sign', 'personal_sign', 'eth_signTypedData'],
@@ -710,7 +680,6 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
               }
 
               if (wcProvider.session) {
-                console.log('Auto-connecting WalletConnect...');
                 const browserProvider = new ethers.BrowserProvider(wcProvider);
                 const accounts = await browserProvider.listAccounts();
                 

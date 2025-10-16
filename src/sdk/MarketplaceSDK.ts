@@ -529,8 +529,6 @@ export class MarketplaceSDK {
 
   // Get all active listed tokens on marketplace (legacy method - for compatibility)
   async getAllActiveListedDomainsOnMarketplaceWithTokenData(): Promise<ListedToken[]> {
-    const listedTokens: ListedToken[] = [];
-    
     try {
       let lastListingId: number = 0;
       
