@@ -1,8 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { ethers } from 'ethers';
 import { EthereumProvider } from '@walletconnect/ethereum-provider';
-import { withWalletConnectErrorSuppression } from '../utils/walletConnectErrorSuppression';
-import { silentWalletConnect } from '../utils/silentWalletConnect';
 
 export type WalletType = 'metamask' | 'walletconnect';
 
@@ -18,6 +16,7 @@ interface WalletContextType {
   isConnecting: boolean;
   isNetworkSwitching: boolean;
   error: string | null;
+  setError: (error: string | null) => void;
   walletType: WalletType | null;
 }
 
@@ -50,47 +49,11 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
   
   // Store WalletConnect provider globally to prevent multiple initializations
   const [wcProviderInstance, setWcProviderInstance] = useState<any>(null);
+  
+  // Global variable to track WalletConnect initialization state
+  let isWalletConnectInitializing = false;
 
-  // Add comprehensive error handling for WalletConnect session errors
-  useEffect(() => {
-    const handleWalletConnectError = (event: ErrorEvent) => {
-      if (event.error && event.error.message && 
-          event.error.message.includes('No matching key. session topic doesn\'t exist')) {
-        console.log('Suppressing WalletConnect session topic error:', event.error.message);
-        event.preventDefault();
-        return false;
-      }
-    };
-
-    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
-      if (event.reason && event.reason.message && 
-          event.reason.message.includes('No matching key. session topic doesn\'t exist')) {
-        console.log('Suppressing WalletConnect session topic promise rejection:', event.reason.message);
-        event.preventDefault();
-        return false;
-      }
-    };
-
-    // Override console.error to suppress WalletConnect session errors
-    const originalConsoleError = console.error;
-    console.error = (...args) => {
-      const message = args.join(' ');
-      if (message.includes('No matching key. session topic doesn\'t exist')) {
-        console.log('Suppressing WalletConnect session topic console error:', message);
-        return;
-      }
-      originalConsoleError.apply(console, args);
-    };
-
-    window.addEventListener('error', handleWalletConnectError);
-    window.addEventListener('unhandledrejection', handleUnhandledRejection);
-    
-    return () => {
-      window.removeEventListener('error', handleWalletConnectError);
-      window.removeEventListener('unhandledrejection', handleUnhandledRejection);
-      console.error = originalConsoleError;
-    };
-  }, []);
+  // Removed error suppression - implementing proper error handling instead
 
   const updateBalance = async (address: string, provider: ethers.BrowserProvider) => {
     // Skip balance update if we're in the middle of a network switch
@@ -103,8 +66,13 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
       const balanceWei = await provider.getBalance(address);
       const balanceEth = ethers.formatEther(balanceWei);
       setBalance(parseFloat(balanceEth).toFixed(4));
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error fetching balance:', err);
+      // Check if it's a network change error and handle gracefully
+      if (err.message?.includes('network changed')) {
+        console.log('Network change detected during balance update, skipping...');
+        return;
+      }
       // Don't set balance to null on error, keep previous value
     }
   };
@@ -195,56 +163,97 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
     }
   };
 
-  const connectWalletConnect = async (retryCount = 0): Promise<void> => {
+  const connectWalletConnect = async (): Promise<void> => {
     // Prevent multiple simultaneous connection attempts
     if (isConnecting) {
-      console.log('WalletConnect connection already in progress, skipping...');
-      return;
+      throw new Error('Connection already in progress. Please wait for the current connection to complete.');
     }
 
     // Prevent rapid successive connection attempts (minimum 2 seconds between attempts)
     const now = Date.now();
     if (now - lastConnectionAttempt < 2000) {
-      console.log('Too soon since last connection attempt, please wait...');
-      // Instead of throwing an error, just return silently
-      return;
+      throw new Error('Please wait a moment before trying to connect again.');
     }
     setLastConnectionAttempt(now);
 
-    return withWalletConnectErrorSuppression(async () => {
-      try {
-        setIsConnecting(true);
-        console.log('Starting WalletConnect connection...');
-        
-        // Create WalletConnect provider
-        const projectId = process.env.REACT_APP_WALLETCONNECT_PROJECT_ID;
-        if (!projectId) {
-          throw new Error('WalletConnect Project ID not configured. Please set REACT_APP_WALLETCONNECT_PROJECT_ID in your environment variables.');
-        }
+    try {
+      setIsConnecting(true);
+      console.log('Starting WalletConnect connection...');
+      
+      // Create WalletConnect provider
+      const projectId = process.env.REACT_APP_WALLETCONNECT_PROJECT_ID;
+      if (!projectId) {
+        throw new Error('WalletConnect Project ID not configured. Please set REACT_APP_WALLETCONNECT_PROJECT_ID in your environment variables.');
+      }
 
-        // Use silent WalletConnect wrapper to handle all errors internally
-        console.log('Initializing silent WalletConnect provider...');
-        const wcProvider = await silentWalletConnect.init({
-          projectId: projectId,
-          chains: [1, 137, 56, 43114, 80002], // Ethereum, Polygon, BSC, Avalanche, Polygon Amoy
-          showQrModal: true,
-          metadata: {
-            name: 'STR Domains Marketplace',
-            description: 'Decentralized marketplace for STR domains',
-            url: window.location.origin,
-            icons: [`${window.location.origin}/logo192.png`]
-          },
-          // Add better session management
-          relayUrl: 'wss://relay.walletconnect.com',
-          qrModalOptions: {
-            themeMode: 'light',
-            themeVariables: {
-              '--wcm-z-index': '1000'
-            }
-          },
-        });
+      // Clean up existing provider if any
+      if (wcProviderInstance) {
+        try {
+          console.log('Cleaning up existing WalletConnect provider...');
+          await wcProviderInstance.disconnect();
+          setWcProviderInstance(null);
+          setWalletConnectProvider(null);
+        } catch (cleanupError) {
+          console.log('Error during cleanup (this is usually fine):', cleanupError);
+          setWcProviderInstance(null);
+          setWalletConnectProvider(null);
+        }
+      }
+
+      let wcProvider = wcProviderInstance;
+      
+      // Only initialize if not already initialized and not currently initializing
+      if (!wcProvider && !isWalletConnectInitializing) {
+        console.log('Initializing WalletConnect provider...');
+        isWalletConnectInitializing = true;
         
-        setWcProviderInstance(wcProvider);
+        try {
+          wcProvider = await EthereumProvider.init({
+            projectId: projectId,
+            chains: [1, 137, 56, 43114, 80002], // Ethereum, Polygon, BSC, Avalanche, Polygon Amoy
+            showQrModal: true,
+            metadata: {
+              name: 'STR Domains Marketplace',
+              description: 'Decentralized marketplace for STR domains',
+              url: window.location.origin,
+              icons: [`${window.location.origin}/logo192.png`]
+            },
+            relayUrl: 'wss://relay.walletconnect.com',
+            qrModalOptions: {
+              themeMode: 'light',
+              themeVariables: {
+                '--wcm-z-index': '1000'
+              }
+            },
+            disableProviderPing: true,
+            optionalChains: [80002],
+            events: ['session_request', 'session_update', 'session_delete'],
+            methods: ['eth_sendTransaction', 'eth_signTransaction', 'eth_sign', 'personal_sign', 'eth_signTypedData'],
+          });
+          setWcProviderInstance(wcProvider);
+          isWalletConnectInitializing = false;
+        } catch (initError: any) {
+          isWalletConnectInitializing = false;
+          console.error('Error initializing WalletConnect provider:', initError);
+          if (initError.message?.includes('already initialized')) {
+            console.log('WalletConnect already initialized, continuing...');
+            wcProvider = wcProviderInstance;
+          } else {
+            throw initError;
+          }
+        }
+      } else if (isWalletConnectInitializing) {
+        console.log('WalletConnect is currently initializing, waiting...');
+        // Wait for initialization to complete
+        let attempts = 0;
+        while (isWalletConnectInitializing && attempts < 50) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+          attempts++;
+        }
+        wcProvider = wcProviderInstance;
+      } else {
+        console.log('Using existing WalletConnect provider instance');
+      }
 
       console.log('WalletConnect provider initialized, enabling session...');
       // Enable session (triggers QR Code modal) with comprehensive error handling
@@ -288,32 +297,24 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
       localStorage.removeItem('walletDisconnected');
       
         console.log('WalletConnect connection completed successfully');
-      } catch (error: any) {
-        console.error('WalletConnect connection error:', error);
-        if (error.message?.includes('User rejected')) {
-          throw new Error('Connection cancelled by user');
-        } else if (error.message?.includes('Connection request reset') || 
-                   error.message?.includes('Please try again') ||
-                   error.message?.includes('connection was reset') ||
-                   error.message?.includes('request was reset')) {
-          // Handle connection reset silently with automatic retry
-          console.log('Connection request reset detected, attempting silent retry...');
-          if (retryCount < 3) {
-            // Wait a bit and retry silently
-            await new Promise(resolve => setTimeout(resolve, 1000 + (retryCount * 500)));
-            console.log(`Silent retry attempt ${retryCount + 1}/3`);
-            return connectWalletConnect(retryCount + 1);
-          } else {
-            console.log('Max retry attempts reached, connection failed silently');
-            // Don't throw error, just fail silently
-            return;
+        } catch (error: any) {
+          console.error('WalletConnect connection error:', error);
+          if (error.message?.includes('User rejected')) {
+            throw new Error('Connection cancelled by user');
+          } else if (error.message?.includes('Connection request reset') || 
+                     error.message?.includes('Please try again') ||
+                     error.message?.includes('connection was reset') ||
+                     error.message?.includes('request was reset')) {
+            throw new Error('Connection request was reset. Please try connecting again.');
+          } else if (error.message?.includes('No matching key. session topic doesn\'t exist')) {
+            throw new Error('WalletConnect session expired. Please try connecting again.');
+          } else if (error.message?.includes('already initialized')) {
+            throw new Error('WalletConnect is already initializing. Please wait and try again.');
           }
-        }
-        throw error;
-      } finally {
-        setIsConnecting(false);
-      }
-    });
+          throw error;
+    } finally {
+      setIsConnecting(false);
+    }
   };
 
   const switchNetwork = async (targetChainId: number) => {
@@ -495,7 +496,7 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
     if (walletConnectProvider && walletType === 'walletconnect') {
       try {
         console.log('Disconnecting WalletConnect provider...');
-        await silentWalletConnect.disconnect();
+        await walletConnectProvider.disconnect();
         console.log('WalletConnect provider disconnected successfully');
       } catch (error) {
         console.error('Error disconnecting WalletConnect:', error);
@@ -756,6 +757,7 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
     isConnecting,
     isNetworkSwitching,
     error,
+    setError,
     walletType,
   };
 

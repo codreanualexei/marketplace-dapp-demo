@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Hero from '../Components/Hero';
 import { useMarketplaceSDK } from '../hooks/useMarketplaceSDK';
+import { useWallet } from '../contexts/WalletContext';
 import { ListedToken } from '../sdk/MarketplaceSDK';
 import './Home.css';
 
@@ -10,6 +11,7 @@ interface HomeProps {
 
 const Home: React.FC<HomeProps> = ({ onNavigate }) => {
   const sdk = useMarketplaceSDK();
+  const { account } = useWallet();
   const [featuredNFTs, setFeaturedNFTs] = useState<ListedToken[]>([]);
   useEffect(() => {
     if (sdk) {
@@ -19,6 +21,12 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
 
   const loadFeaturedNFTs = async () => {
     if (!sdk) return;
+    
+    // Only load featured NFTs if wallet is connected
+    if (!account) {
+      console.log('Wallet not connected, skipping featured NFTs load');
+      return;
+    }
     
     try {
       const listings = await sdk.getAllActiveListedDomainsOnMarketplaceWithTokenData();

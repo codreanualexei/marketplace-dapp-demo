@@ -540,8 +540,14 @@ export class MarketplaceSDK {
         lastListingId = Number(result);
         this.log('lastListingId:', lastListingId);
       } catch (error: any) {
-        this.warn('lastListingId() not available, using fallback method');
-        return await this.scanForListings(true);
+        this.warn('lastListingId() not available, using fallback method. Error:', error.message);
+        // Only use fallback if we have a valid signer and provider
+        if (this.signer && this.provider) {
+          return await this.scanForListings(true);
+        } else {
+          this.warn('No valid signer/provider available, returning empty array');
+          return [];
+        }
       }
 
       if (lastListingId === 0) {
@@ -560,7 +566,7 @@ export class MarketplaceSDK {
   // Fallback: Scan for listings without lastListingId
   private async scanForListings(activeOnly: boolean = true): Promise<ListedToken[]> {
     const listedTokens: ListedToken[] = [];
-    const MAX_SCAN = 20; // Reduced to avoid RPC spam
+    const MAX_SCAN = 10; // Further reduced to avoid RPC spam
     let consecutiveFailures = 0;
     let rpcErrorCount = 0;
     
@@ -578,7 +584,7 @@ export class MarketplaceSDK {
           await delay(backoffDelay);
         } else {
           // Normal delay
-          await delay(300);
+          await delay(200); // Reduced delay
         }
         
         const listing = await this.marketplaceContract.getListing(listingId);
@@ -643,8 +649,14 @@ export class MarketplaceSDK {
         const result = await this.marketplaceContract.lastListingId();
         lastListingId = Number(result);
       } catch (error: any) {
-        this.warn('lastListingId() not available, using fallback');
-        return await this.scanForListings(false);
+        this.warn('lastListingId() not available, using fallback. Error:', error.message);
+        // Only use fallback if we have a valid signer and provider
+        if (this.signer && this.provider) {
+          return await this.scanForListings(false);
+        } else {
+          this.warn('No valid signer/provider available, returning empty array');
+          return [];
+        }
       }
 
       if (lastListingId === 0) {
@@ -670,9 +682,15 @@ export class MarketplaceSDK {
         const result = await this.marketplaceContract.lastListingId();
         lastListingId = Number(result);
       } catch (error: any) {
-        this.warn('lastListingId() not available, using fallback');
-        const allListings = await this.scanForListings(false);
-        return allListings.filter(l => l.seller.toLowerCase() === myAddress);
+        this.warn('lastListingId() not available, using fallback. Error:', error.message);
+        // Only use fallback if we have a valid signer and provider
+        if (this.signer && this.provider) {
+          const allListings = await this.scanForListings(false);
+          return allListings.filter(l => l.seller.toLowerCase() === myAddress);
+        } else {
+          this.warn('No valid signer/provider available, returning empty array');
+          return [];
+        }
       }
 
       if (lastListingId === 0) {

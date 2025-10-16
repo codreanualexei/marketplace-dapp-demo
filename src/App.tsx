@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
-import { WalletProvider } from './contexts/WalletContext';
-import WalletConnectErrorBoundary from './Components/WalletConnectErrorBoundary';
-import GlobalErrorHandler from './Components/GlobalErrorHandler';
+import { WalletProvider, useWallet } from './contexts/WalletContext';
 import Header from './Components/Header';
 import NetworkChecker from './Components/NetworkChecker';
+import ErrorDisplay from './Components/ErrorDisplay';
 import Home from './Pages/Home';
 import Marketplace from './Pages/Marketplace';
 import MyDomains from './Pages/MyDomains';
@@ -13,8 +12,9 @@ import Mint from './Pages/Mint';
 import Debug from './Pages/Debug';
 import './App.css';
 
-function App() {
-  const [currentPage, setCurrentPage] = useState('home');
+// Component that displays wallet errors
+const AppContent: React.FC<{ currentPage: string; setCurrentPage: (page: string) => void }> = ({ currentPage, setCurrentPage }) => {
+  const { error, setError } = useWallet();
 
   const renderPage = () => {
     switch (currentPage) {
@@ -38,17 +38,25 @@ function App() {
   };
 
   return (
-    <GlobalErrorHandler>
-      <WalletConnectErrorBoundary>
-        <WalletProvider>
-          <div className="App">
-            <Header currentPage={currentPage} onNavigate={setCurrentPage} />
-            <NetworkChecker />
-            {renderPage()}
-          </div>
-        </WalletProvider>
-      </WalletConnectErrorBoundary>
-    </GlobalErrorHandler>
+    <div className="App">
+      <Header currentPage={currentPage} onNavigate={setCurrentPage} />
+      <NetworkChecker />
+      {renderPage()}
+      <ErrorDisplay 
+        error={error} 
+        onDismiss={() => setError(null)} 
+      />
+    </div>
+  );
+};
+
+function App() {
+  const [currentPage, setCurrentPage] = useState('home');
+
+  return (
+    <WalletProvider>
+      <AppContent currentPage={currentPage} setCurrentPage={setCurrentPage} />
+    </WalletProvider>
   );
 }
 

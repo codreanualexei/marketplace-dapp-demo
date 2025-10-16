@@ -55,7 +55,10 @@ export const useMarketplaceSDK = (): MarketplaceSDK | null => {
         const provider = new ethers.JsonRpcProvider(rpcUrl);
         // Create a dummy wallet connected to provider; avoids provider.getSigner() which throws on public RPC
         const readOnlySigner = ethers.Wallet.createRandom().connect(provider);
-        return new MarketplaceSDK(readOnlySigner, MARKETPLACE_ADDRESS, NFT_ADDRESS, IS_DEV);
+        const sdk = new MarketplaceSDK(readOnlySigner, MARKETPLACE_ADDRESS, NFT_ADDRESS, IS_DEV);
+        // Disable develop mode for read-only SDK to reduce console spam
+        sdk.setDevelopMode(false);
+        return sdk;
       }
 
       console.log('No valid signer or RPC URL available for Marketplace SDK');
