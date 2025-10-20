@@ -435,10 +435,57 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
       });
 
       // Wait a moment for the network change to propagate
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await new Promise((resolve) => setTimeout(resolve, 2000));
 
-      // Update the chainId state after successful switch
+      // Create a new provider and signer with the updated network
+      // Retry a few times in case the network change is still propagating
+      let newProvider: ethers.BrowserProvider | null = null;
+      let newSigner: ethers.JsonRpcSigner | null = null;
+      let network: ethers.Network | null = null;
+      let retries = 0;
+      const maxRetries = 3;
+
+      while (retries < maxRetries) {
+        try {
+          newProvider = new ethers.BrowserProvider(walletConnectProvider);
+          newSigner = await newProvider.getSigner();
+          network = await newProvider.getNetwork();
+
+          // Verify we're on the correct network
+          if (Number(network.chainId) === targetChainId) {
+            break;
+          }
+          
+          retries++;
+          if (retries < maxRetries) {
+            console.log(`Network not yet switched, retrying... (${retries}/${maxRetries})`);
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+          }
+        } catch (error) {
+          retries++;
+          if (retries < maxRetries) {
+            console.log(`Error getting network info, retrying... (${retries}/${maxRetries})`);
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+          } else {
+            throw error;
+          }
+        }
+      }
+
+      if (!network || Number(network.chainId) !== targetChainId) {
+        throw new Error(`Network switch failed. Expected ${targetChainId}, got ${network?.chainId || 'unknown'}`);
+      }
+
+      if (!newProvider || !newSigner) {
+        throw new Error("Failed to create new provider and signer after network switch");
+      }
+
+      // Update all the state with the new provider/signer
+      setProvider(newProvider);
+      setSigner(newSigner);
       setChainId(targetChainId);
+
+      console.log("WalletConnect network switched successfully to:", targetChainId);
     } catch (switchError: any) {
       console.log("wallet_switchEthereumChain failed:", switchError);
 
@@ -452,10 +499,57 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
           });
 
           // Wait for network to be added and switched
-          await new Promise((resolve) => setTimeout(resolve, 1000));
+          await new Promise((resolve) => setTimeout(resolve, 2000));
 
-          // Update the chainId state after successful add and switch
+          // Create a new provider and signer with the updated network
+          // Retry a few times in case the network change is still propagating
+          let newProvider: ethers.BrowserProvider | null = null;
+          let newSigner: ethers.JsonRpcSigner | null = null;
+          let network: ethers.Network | null = null;
+          let retries = 0;
+          const maxRetries = 3;
+
+          while (retries < maxRetries) {
+            try {
+              newProvider = new ethers.BrowserProvider(walletConnectProvider);
+              newSigner = await newProvider.getSigner();
+              network = await newProvider.getNetwork();
+
+              // Verify we're on the correct network
+              if (Number(network.chainId) === targetChainId) {
+                break;
+              }
+              
+              retries++;
+              if (retries < maxRetries) {
+                console.log(`Network not yet switched after add, retrying... (${retries}/${maxRetries})`);
+                await new Promise((resolve) => setTimeout(resolve, 1000));
+              }
+            } catch (error) {
+              retries++;
+              if (retries < maxRetries) {
+                console.log(`Error getting network info after add, retrying... (${retries}/${maxRetries})`);
+                await new Promise((resolve) => setTimeout(resolve, 1000));
+              } else {
+                throw error;
+              }
+            }
+          }
+
+          if (!network || Number(network.chainId) !== targetChainId) {
+            throw new Error(`Network switch failed. Expected ${targetChainId}, got ${network?.chainId || 'unknown'}`);
+          }
+
+          if (!newProvider || !newSigner) {
+            throw new Error("Failed to create new provider and signer after network switch");
+          }
+
+          // Update all the state with the new provider/signer
+          setProvider(newProvider);
+          setSigner(newSigner);
           setChainId(targetChainId);
+
+          console.log("WalletConnect network added and switched successfully to:", targetChainId);
         } catch (addError: any) {
           console.log("wallet_addEthereumChain failed:", addError);
           throw new Error(
@@ -615,13 +709,28 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
         }
       };
 
-      const handleChainChanged = (chainId: number | string) => {
+      const handleChainChanged = async (chainId: number | string) => {
         // Ensure chainId is always a number
         const numericChainId =
           typeof chainId === "string" ? parseInt(chainId, 16) : chainId;
+        
+        console.log("WalletConnect chain changed to:", numericChainId);
+        
+        // Update chainId immediately
         setChainId(numericChainId);
-
-        // Don't update balance immediately - let the network switch process handle it
+        
+        // Create new provider and signer with the updated network
+        try {
+          const newProvider = new ethers.BrowserProvider(walletConnectProvider);
+          const newSigner = await newProvider.getSigner();
+          
+          setProvider(newProvider);
+          setSigner(newSigner);
+          
+          console.log("WalletConnect provider updated for new network:", numericChainId);
+        } catch (error) {
+          console.error("Error updating WalletConnect provider after network change:", error);
+        }
       };
 
       const handleDisconnect = () => {

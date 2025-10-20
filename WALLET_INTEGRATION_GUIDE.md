@@ -92,3 +92,4 @@ This dapp supports two wallet types:
 4. **Respect user preferences** for wallet type selection
 5. **Clean up properly** on disconnection to prevent memory leaks
 
+
