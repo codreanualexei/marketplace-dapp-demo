@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { useWallet } from '../contexts/WalletContext';
-import { useMarketplaceSDK } from '../hooks/useMarketplaceSDK';
-import './Mint.css';
+import React, { useState, useEffect } from "react";
+import { useWallet } from "../contexts/WalletContext";
+import { useMarketplaceSDK } from "../hooks/useMarketplaceSDK";
+import "./Mint.css";
 
 const Mint: React.FC = () => {
   const { account } = useWallet();
@@ -9,9 +9,9 @@ const Mint: React.FC = () => {
   const [isAdmin, setIsAdmin] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isMinting, setIsMinting] = useState(false);
-  
-  const [recipient, setRecipient] = useState('');
-  const [tokenURI, setTokenURI] = useState('');
+
+  const [recipient, setRecipient] = useState("");
+  const [tokenURI, setTokenURI] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -24,13 +24,13 @@ const Mint: React.FC = () => {
 
   const checkAdminStatus = async () => {
     if (!sdk) return;
-    
+
     setIsLoading(true);
     try {
       const admin = await sdk.isAdmin();
       setIsAdmin(admin);
     } catch (err) {
-      console.error('Error checking admin status:', err);
+      console.error("Error checking admin status:", err);
       setIsAdmin(false);
     } finally {
       setIsLoading(false);
@@ -39,9 +39,9 @@ const Mint: React.FC = () => {
 
   const handleMint = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!sdk || !recipient || !tokenURI) {
-      setError('Please fill in all fields');
+      setError("Please fill in all fields");
       return;
     }
 
@@ -51,18 +51,18 @@ const Mint: React.FC = () => {
 
     try {
       const txHash = await sdk.mintDomain(recipient, tokenURI);
-      
+
       if (txHash) {
         setSuccess(`NFT minted successfully! Transaction: ${txHash}`);
         // Clear form
-        setTokenURI('');
+        setTokenURI("");
         // Keep recipient filled
       } else {
-        setError('Failed to mint NFT. Make sure you have MINTER_ROLE.');
+        setError("Failed to mint NFT. Make sure you have MINTER_ROLE.");
       }
     } catch (err: any) {
-      console.error('Error minting:', err);
-      setError(err.message || 'Failed to mint NFT');
+      console.error("Error minting:", err);
+      setError(err.message || "Failed to mint NFT");
     } finally {
       setIsMinting(false);
     }
@@ -146,24 +146,16 @@ const Mint: React.FC = () => {
               <small>Metadata URI (IPFS or HTTP link to JSON metadata)</small>
             </div>
 
-            {error && (
-              <div className="alert error">
-                {error}
-              </div>
-            )}
+            {error && <div className="alert error">{error}</div>}
 
-            {success && (
-              <div className="alert success">
-                {success}
-              </div>
-            )}
+            {success && <div className="alert success">{success}</div>}
 
-            <button 
-              type="submit" 
+            <button
+              type="submit"
               className="mint-button"
               disabled={isMinting || !recipient || !tokenURI}
             >
-              {isMinting ? 'Minting...' : 'Mint NFT'}
+              {isMinting ? "Minting..." : "Mint NFT"}
             </button>
           </form>
 
@@ -172,8 +164,12 @@ const Mint: React.FC = () => {
             <ul>
               <li>✅ NFT is minted to the recipient address</li>
               <li>✅ Royalty splitter is automatically created</li>
-              <li>✅ Creator gets 40% of future royalties (2% of sale price)</li>
-              <li>✅ Treasury gets 60% of future royalties (3% of sale price)</li>
+              <li>
+                ✅ Creator gets 40% of future royalties (2% of sale price)
+              </li>
+              <li>
+                ✅ Treasury gets 60% of future royalties (3% of sale price)
+              </li>
               <li>✅ Total royalty: 5% of sale price</li>
             </ul>
           </div>
@@ -191,4 +187,3 @@ const Mint: React.FC = () => {
 };
 
 export default Mint;
-

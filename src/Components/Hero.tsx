@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-import { useWallet, WalletType } from '../contexts/WalletContext';
-import './Hero.css';
+import React, { useState } from "react";
+import { useWallet, WalletType } from "../contexts/WalletContext";
+import "./Hero.css";
 
 interface HeroProps {
   onNavigate?: (page: string) => void;
@@ -24,31 +24,32 @@ const Hero: React.FC<HeroProps> = ({ onNavigate }) => {
             <span className="gradient-text"> Extraordinary NFTs</span>
           </h1>
           <p className="hero-description">
-            The world's first and largest digital marketplace for crypto collectibles and non-fungible tokens.
-            Buy, sell, and discover exclusive digital items.
+            The world's first and largest digital marketplace for crypto
+            collectibles and non-fungible tokens. Buy, sell, and discover
+            exclusive digital items.
           </p>
           <div className="hero-actions">
             {!account ? (
               <div className="hero-wallet-connect">
-                <button 
-                  className="hero-button primary" 
+                <button
+                  className="hero-button primary"
                   onClick={() => setShowWalletOptions(!showWalletOptions)}
                   disabled={isConnecting}
                 >
-                  {isConnecting ? 'Connecting...' : 'Connect Wallet'}
+                  {isConnecting ? "Connecting..." : "Connect Wallet"}
                 </button>
                 {showWalletOptions && (
                   <div className="hero-wallet-options">
-                    <button 
+                    <button
                       className="hero-wallet-option"
-                      onClick={() => handleWalletConnect('metamask')}
+                      onClick={() => handleWalletConnect("metamask")}
                       disabled={isConnecting}
                     >
                       🦊 MetaMask
                     </button>
-                    <button 
+                    <button
                       className="hero-wallet-option"
-                      onClick={() => handleWalletConnect('walletconnect')}
+                      onClick={() => handleWalletConnect("walletconnect")}
                       disabled={isConnecting}
                     >
                       🔗 WalletConnect
@@ -58,15 +59,15 @@ const Hero: React.FC<HeroProps> = ({ onNavigate }) => {
               </div>
             ) : (
               <>
-                <button 
+                <button
                   className="hero-button primary"
-                  onClick={() => onNavigate && onNavigate('marketplace')}
+                  onClick={() => onNavigate && onNavigate("marketplace")}
                 >
                   Explore Marketplace
                 </button>
-                <button 
+                <button
                   className="hero-button secondary"
-                  onClick={() => onNavigate && onNavigate('my-domains')}
+                  onClick={() => onNavigate && onNavigate("my-domains")}
                 >
                   My Domains
                 </button>
@@ -101,4 +102,3 @@ const Hero: React.FC<HeroProps> = ({ onNavigate }) => {
 };
 
 export default Hero;
-

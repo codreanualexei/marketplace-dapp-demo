@@ -1,4 +1,4 @@
-import React from 'react';
+import React from "react";
 
 interface ErrorDisplayProps {
   error: string | null;
@@ -13,11 +13,11 @@ const ErrorDisplay: React.FC<ErrorDisplayProps> = ({ error, onDismiss }) => {
       <div className="error-content">
         <div className="error-header">
           <h3>Connection Error</h3>
-          <button onClick={onDismiss} className="error-close">×</button>
+          <button onClick={onDismiss} className="error-close">
+            ×
+          </button>
         </div>
-        <div className="error-message">
-          {error}
-        </div>
+        <div className="error-message">{error}</div>
         <div className="error-actions">
           <button onClick={onDismiss} className="error-dismiss">
             Dismiss

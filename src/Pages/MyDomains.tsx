@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
-import { useWallet } from '../contexts/WalletContext';
-import { useMarketplaceSDK } from '../hooks/useMarketplaceSDK';
-import { FormattedToken } from '../sdk/MarketplaceSDK';
-import Pagination from '../Components/Pagination';
-import './MyDomains.css';
+import React, { useState } from "react";
+import { useWallet } from "../contexts/WalletContext";
+import { useMarketplaceSDK } from "../hooks/useMarketplaceSDK";
+import { FormattedToken } from "../sdk/MarketplaceSDK";
+import Pagination from "../Components/Pagination";
+import "./MyDomains.css";
 
 const ITEMS_PER_PAGE = 12;
 
@@ -14,7 +14,7 @@ const MyDomains: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [listingTokenId, setListingTokenId] = useState<number | null>(null);
-  const [listPrice, setListPrice] = useState<string>('');
+  const [listPrice, setListPrice] = useState<string>("");
   const [currentPage, setCurrentPage] = useState(1);
 
   // Don't auto-load to avoid RPC rate limiting
@@ -30,8 +30,8 @@ const MyDomains: React.FC = () => {
       const domains = await sdk.getMyDomainsFromCollection();
       setMyDomains(domains);
     } catch (err: any) {
-      console.error('Error loading domains:', err);
-      setError('Failed to load your domains');
+      console.error("Error loading domains:", err);
+      setError("Failed to load your domains");
     } finally {
       setIsLoading(false);
     }
@@ -39,43 +39,45 @@ const MyDomains: React.FC = () => {
 
   const handleListClick = (tokenId: number) => {
     setListingTokenId(tokenId);
-    setListPrice('');
+    setListPrice("");
   };
 
   const handleCancelList = () => {
     setListingTokenId(null);
-    setListPrice('');
+    setListPrice("");
   };
 
   const handleConfirmList = async (tokenId: number) => {
     if (!sdk || !listPrice || parseFloat(listPrice) <= 0) {
-      alert('Please enter a valid price');
+      alert("Please enter a valid price");
       return;
     }
 
     const confirmed = window.confirm(
-      `List Domain #${tokenId} for ${listPrice} MATIC?`
+      `List Domain #${tokenId} for ${listPrice} MATIC?`,
     );
-    
+
     if (!confirmed) return;
 
     setIsLoading(true);
 
     try {
       const txHash = await sdk.listToken(tokenId, listPrice);
-      
+
       if (txHash) {
         alert(`Domain listed successfully! Transaction: ${txHash}`);
         setListingTokenId(null);
-        setListPrice('');
+        setListPrice("");
         // Reload domains
         await loadMyDomains();
       } else {
-        alert('Failed to list domain. Make sure you own it and it\'s not already listed.');
+        alert(
+          "Failed to list domain. Make sure you own it and it's not already listed.",
+        );
       }
     } catch (err: any) {
-      console.error('Error listing token:', err);
-      alert(`Error: ${err.message || 'Failed to list domain'}`);
+      console.error("Error listing token:", err);
+      alert(`Error: ${err.message || "Failed to list domain"}`);
     } finally {
       setIsLoading(false);
     }
@@ -93,7 +95,7 @@ const MyDomains: React.FC = () => {
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   if (!account) {
@@ -138,12 +140,12 @@ const MyDomains: React.FC = () => {
         </div>
 
         <div className="load-section">
-          <button 
+          <button
             className="load-button"
             onClick={loadMyDomains}
             disabled={isLoading}
           >
-            {isLoading ? 'Loading Your Domains...' : 'Load My Domains'}
+            {isLoading ? "Loading Your Domains..." : "Load My Domains"}
           </button>
           <p className="load-hint">
             Click to scan the collection for NFTs you own
@@ -163,29 +165,36 @@ const MyDomains: React.FC = () => {
                 <span className="stat-label">Total Domains</span>
               </div>
             </div>
-            
+
             <div className="nft-grid">
               {paginatedDomains.map((domain) => (
                 <div key={domain.tokenId} className="nft-card">
                   <div className="nft-card-image">
-                    <img 
-                      src={domain.uri || `https://via.placeholder.com/400x400/667eea/ffffff?text=Domain+${domain.tokenId}`}
+                    <img
+                      src={
+                        domain.uri ||
+                        `https://via.placeholder.com/400x400/667eea/ffffff?text=Domain+${domain.tokenId}`
+                      }
                       alt={`Domain #${domain.tokenId}`}
                       onError={(e) => {
                         e.currentTarget.src = `https://via.placeholder.com/400x400/667eea/ffffff?text=Domain+${domain.tokenId}`;
                       }}
                     />
                   </div>
-                  
+
                   <div className="nft-card-content">
                     <div className="nft-card-header">
-                      <h3 className="nft-card-title">Domain #{domain.tokenId}</h3>
+                      <h3 className="nft-card-title">
+                        Domain #{domain.tokenId}
+                      </h3>
                     </div>
-                    
+
                     <div className="nft-info">
                       <div className="info-row">
                         <span className="label">Creator:</span>
-                        <span className="value">{formatAddress(domain.creator)}</span>
+                        <span className="value">
+                          {formatAddress(domain.creator)}
+                        </span>
                       </div>
                       {domain.lastPrice !== "0" && (
                         <div className="info-row">
@@ -198,11 +207,13 @@ const MyDomains: React.FC = () => {
                       <div className="info-row">
                         <span className="label">Minted:</span>
                         <span className="value">
-                          {new Date(domain.mintTimestamp * 1000).toLocaleDateString()}
+                          {new Date(
+                            domain.mintTimestamp * 1000,
+                          ).toLocaleDateString()}
                         </span>
                       </div>
                     </div>
-                    
+
                     {listingTokenId === domain.tokenId ? (
                       <div className="listing-form">
                         <input
@@ -215,24 +226,24 @@ const MyDomains: React.FC = () => {
                           className="price-input"
                         />
                         <div className="form-actions">
-                          <button 
+                          <button
                             className="action-button secondary"
                             onClick={handleCancelList}
                           >
                             Cancel
                           </button>
-                          <button 
+                          <button
                             className="action-button primary"
                             onClick={() => handleConfirmList(domain.tokenId)}
                             disabled={!listPrice || isLoading}
                           >
-                            {isLoading ? 'Listing...' : 'Confirm'}
+                            {isLoading ? "Listing..." : "Confirm"}
                           </button>
                         </div>
                       </div>
                     ) : (
                       <div className="nft-card-footer">
-                        <button 
+                        <button
                           className="action-button primary"
                           onClick={() => handleListClick(domain.tokenId)}
                           disabled={isLoading}

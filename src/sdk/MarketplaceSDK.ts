@@ -1,7 +1,7 @@
-import { ethers } from 'ethers';
-import MarketplaceABI from '../contracts/abis/Marketplace.json';
-import StrDomainsNFTABI from '../contracts/abis/StrDomainsNFT.json';
-import RoyaltySplitterABI from '../contracts/abis/RoyaltySplitter.json';
+import { ethers } from "ethers";
+import MarketplaceABI from "../contracts/abis/Marketplace.json";
+import StrDomainsNFTABI from "../contracts/abis/StrDomainsNFT.json";
+import RoyaltySplitterABI from "../contracts/abis/RoyaltySplitter.json";
 
 export interface TokenData {
   creator: string;
@@ -53,7 +53,7 @@ export class MarketplaceSDK {
     signer: ethers.Signer,
     marketplaceAddress: string,
     nftAddress: string,
-    develop: boolean = false
+    develop: boolean = false,
   ) {
     this.develop = develop;
     this.signer = signer;
@@ -65,26 +65,29 @@ export class MarketplaceSDK {
     this.marketplaceContract = new ethers.Contract(
       marketplaceAddress,
       MarketplaceABI,
-      signer
+      signer,
     );
-    this.nftContract = new ethers.Contract(nftAddress, StrDomainsNFTABI, signer);
-
+    this.nftContract = new ethers.Contract(
+      nftAddress,
+      StrDomainsNFTABI,
+      signer,
+    );
   }
 
   // Update signer when wallet changes
   updateSigner(signer: ethers.Signer) {
     this.signer = signer;
     this.provider = signer.provider!;
-    
+
     this.marketplaceContract = new ethers.Contract(
       this.marketplaceAddress,
       MarketplaceABI,
-      signer
+      signer,
     );
     this.nftContract = new ethers.Contract(
       this.nftAddress,
       StrDomainsNFTABI,
-      signer
+      signer,
     );
   }
 
@@ -95,7 +98,7 @@ export class MarketplaceSDK {
       const { price, active } = listing;
 
       if (!active) {
-        this.warn('This listing is not active.');
+        this.warn("This listing is not active.");
         return null;
       }
 
@@ -108,23 +111,28 @@ export class MarketplaceSDK {
       this.warn(`Purchase successful!`);
       return receipt.hash;
     } catch (error: any) {
-      this.error('Error purchasing token:', error);
+      this.error("Error purchasing token:", error);
       return null;
     }
   }
 
   // Update a listed token price
-  async updateListing(listingId: number, newPrice: string): Promise<string | null> {
+  async updateListing(
+    listingId: number,
+    newPrice: string,
+  ): Promise<string | null> {
     try {
       const tx = await this.marketplaceContract.updateListing(
         listingId,
-        ethers.parseEther(newPrice)
+        ethers.parseEther(newPrice),
       );
-      this.warn(`Listing ${listingId} updated with new price: ${newPrice} MATIC`);
+      this.warn(
+        `Listing ${listingId} updated with new price: ${newPrice} MATIC`,
+      );
       const receipt = await tx.wait();
       return receipt.hash;
     } catch (error: any) {
-      this.error('Error updating listing:', error);
+      this.error("Error updating listing:", error);
       return null;
     }
   }
@@ -138,7 +146,7 @@ export class MarketplaceSDK {
 
       if (approved !== this.marketplaceAddress) {
         this.warn(
-          `Please approve tokenId: ${tokenId} for Marketplace address: ${this.marketplaceAddress}, or check the Marketplace listings`
+          `Please approve tokenId: ${tokenId} for Marketplace address: ${this.marketplaceAddress}, or check the Marketplace listings`,
         );
         return null;
       }
@@ -146,13 +154,15 @@ export class MarketplaceSDK {
       const tx = await this.marketplaceContract.listToken(
         this.nftAddress,
         tokenId,
-        ethers.parseEther(price)
+        ethers.parseEther(price),
       );
 
       const receipt = await tx.wait();
       return receipt.hash;
     } catch (error: any) {
-      this.error(`Error listing your tokenId: ${tokenId}, check your ownership`);
+      this.error(
+        `Error listing your tokenId: ${tokenId}, check your ownership`,
+      );
       return null;
     }
   }
@@ -166,7 +176,7 @@ export class MarketplaceSDK {
       return receipt.hash;
     } catch (error: any) {
       this.error(
-        `Error cancelling listing, check the listingId: ${listingId} is active, or it exists`
+        `Error cancelling listing, check the listingId: ${listingId} is active, or it exists`,
       );
       return null;
     }
@@ -178,7 +188,7 @@ export class MarketplaceSDK {
       const fees = await this.marketplaceContract.accruedFees();
       return fees;
     } catch (error: any) {
-      this.error('Error fetching fees details:', error);
+      this.error("Error fetching fees details:", error);
       return null;
     }
   }
@@ -189,7 +199,7 @@ export class MarketplaceSDK {
       const listing = await this.marketplaceContract.getListing(listingId);
       return listing;
     } catch (error: any) {
-      this.error('Error fetching listing details:', error);
+      this.error("Error fetching listing details:", error);
       return null;
     }
   }
@@ -200,13 +210,15 @@ export class MarketplaceSDK {
       const data = await this.nftContract.getTokenData(tokenId);
       return data;
     } catch (error: any) {
-      this.error('Getting token:', error);
+      this.error("Getting token:", error);
       return null;
     }
   }
 
   // Get token data from collection
-  async getStrDomainFromCollection(tokenId: number): Promise<FormattedToken | null> {
+  async getStrDomainFromCollection(
+    tokenId: number,
+  ): Promise<FormattedToken | null> {
     try {
       const data = await this.nftContract.getTokenData(tokenId);
       const formattedToken: FormattedToken = {
@@ -232,8 +244,11 @@ export class MarketplaceSDK {
     let consecutiveFailures = 0;
     const MAX_CONSECUTIVE_FAILURES = 3;
     const MAX_TOKENS = 50; // Limit to avoid RPC issues
-    
-    while (tokenId <= MAX_TOKENS && consecutiveFailures < MAX_CONSECUTIVE_FAILURES) {
+
+    while (
+      tokenId <= MAX_TOKENS &&
+      consecutiveFailures < MAX_CONSECUTIVE_FAILURES
+    ) {
       try {
         const tokenData = await this.getStrDomainFromCollection(tokenId);
         if (tokenData) {
@@ -246,8 +261,8 @@ export class MarketplaceSDK {
       } catch (error: any) {
         consecutiveFailures++;
         if (
-          error.code === 'CALL_EXCEPTION' &&
-          error.reason?.includes('ERC721NonexistentToken')
+          error.code === "CALL_EXCEPTION" &&
+          error.reason?.includes("ERC721NonexistentToken")
         ) {
           tokenId++;
           continue;
@@ -271,11 +286,15 @@ export class MarketplaceSDK {
     const MAX_TOKENS = 20; // Reduced to avoid RPC issues
 
     const myAddress = await this.signer.getAddress();
-    
-    // Helper to delay between calls
-    const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-    while (tokenId <= MAX_TOKENS && consecutiveFailures < MAX_CONSECUTIVE_FAILURES) {
+    // Helper to delay between calls
+    const delay = (ms: number) =>
+      new Promise((resolve) => setTimeout(resolve, ms));
+
+    while (
+      tokenId <= MAX_TOKENS &&
+      consecutiveFailures < MAX_CONSECUTIVE_FAILURES
+    ) {
       try {
         const owner = await this.nftContract.ownerOf(tokenId);
 
@@ -289,17 +308,17 @@ export class MarketplaceSDK {
 
         consecutiveFailures = 0;
         tokenId++;
-        
+
         // Small delay to avoid RPC rate limiting
         await delay(100);
       } catch (error: any) {
         consecutiveFailures++;
-        
+
         if (
-          error.code === 'CALL_EXCEPTION' &&
-          (error.reason?.includes('ERC721NonexistentToken') || 
-           error.reason?.includes('nonexistent') ||
-           error.message?.includes('could not decode'))
+          error.code === "CALL_EXCEPTION" &&
+          (error.reason?.includes("ERC721NonexistentToken") ||
+            error.reason?.includes("nonexistent") ||
+            error.message?.includes("could not decode"))
         ) {
           tokenId++;
           await delay(100);
@@ -307,11 +326,11 @@ export class MarketplaceSDK {
         }
 
         // RPC error - wait longer before continuing
-        if (error.message?.includes('Internal JSON-RPC')) {
+        if (error.message?.includes("Internal JSON-RPC")) {
           this.warn(`RPC rate limit hit at token ${tokenId}, slowing down...`);
           await delay(500);
         }
-        
+
         this.warn(`Error at tokenId ${tokenId}, continuing...`);
         tokenId++;
         await delay(200);
@@ -329,8 +348,11 @@ export class MarketplaceSDK {
     let consecutiveFailures = 0;
     const MAX_CONSECUTIVE_FAILURES = 3;
     const MAX_TOKENS = 50; // Limit to avoid RPC issues
-    
-    while (tokenId <= MAX_TOKENS && consecutiveFailures < MAX_CONSECUTIVE_FAILURES) {
+
+    while (
+      tokenId <= MAX_TOKENS &&
+      consecutiveFailures < MAX_CONSECUTIVE_FAILURES
+    ) {
       try {
         const tokenData = await this.getStrDomainFromCollection(tokenId);
         if (tokenData) {
@@ -343,10 +365,10 @@ export class MarketplaceSDK {
       } catch (error: any) {
         consecutiveFailures++;
         if (
-          error.code === 'CALL_EXCEPTION' &&
-          (error.reason?.includes('ERC721NonexistentToken') ||
-           error.reason?.includes('nonexistent') ||
-           error.message?.includes('could not decode'))
+          error.code === "CALL_EXCEPTION" &&
+          (error.reason?.includes("ERC721NonexistentToken") ||
+            error.reason?.includes("nonexistent") ||
+            error.message?.includes("could not decode"))
         ) {
           tokenId++;
           continue;
@@ -366,7 +388,7 @@ export class MarketplaceSDK {
     this.collectionCountTokens = await this.countCollectionTokens();
     if (!this.collectionCountTokens) {
       this.warn(
-        'no token counter, please run Marketplace.getStrDomainFromCollection()'
+        "no token counter, please run Marketplace.getStrDomainFromCollection()",
       );
       return [];
     }
@@ -374,10 +396,13 @@ export class MarketplaceSDK {
     let tokenId = 1;
     for (tokenId = 1; tokenId <= this.collectionCountTokens; tokenId++) {
       try {
-        const splitterData = await this.nftContract.royaltyInfo(tokenId, 40000000);
+        const splitterData = await this.nftContract.royaltyInfo(
+          tokenId,
+          40000000,
+        );
         splitterList.push(splitterData[0]);
       } catch (error: any) {
-        this.error('Unexpected error fetching token:', error);
+        this.error("Unexpected error fetching token:", error);
         break;
       }
     }
@@ -391,7 +416,7 @@ export class MarketplaceSDK {
       const result = await this.marketplaceContract.lastListingId();
       return Number(result);
     } catch (error: any) {
-      this.error('Error getting listing count:', error);
+      this.error("Error getting listing count:", error);
       return 0;
     }
   }
@@ -414,18 +439,21 @@ export class MarketplaceSDK {
         scanned++;
         if (scanned >= maxScan) break;
         // small delay
-        await new Promise(r => setTimeout(r, 50));
+        await new Promise((r) => setTimeout(r, 50));
       }
       this.cachedActiveListingCount = active;
       return active;
     } catch (e) {
-      this.error('Error counting active listings:', e);
+      this.error("Error counting active listings:", e);
       return 0;
     }
   }
 
   // Get a page of active listings by scanning from the end and skipping inactive/missing
-  async getActiveListingsPage(page: number, perPage: number): Promise<ListedToken[]> {
+  async getActiveListingsPage(
+    page: number,
+    perPage: number,
+  ): Promise<ListedToken[]> {
     const results: ListedToken[] = [];
     try {
       const lastId = await this.getListingCount();
@@ -450,7 +478,9 @@ export class MarketplaceSDK {
 
           let tokenData;
           try {
-            tokenData = await this.getStrDomainFromCollection(Number(listing.tokenId));
+            tokenData = await this.getStrDomainFromCollection(
+              Number(listing.tokenId),
+            );
           } catch (_) {}
 
           results.push({
@@ -468,10 +498,10 @@ export class MarketplaceSDK {
           // ignore and continue
         }
         // small delay
-        await new Promise(r => setTimeout(r, 60));
+        await new Promise((r) => setTimeout(r, 60));
       }
     } catch (e) {
-      this.error('Error fetching active listings page:', e);
+      this.error("Error fetching active listings page:", e);
     }
     return results;
   }
@@ -480,16 +510,19 @@ export class MarketplaceSDK {
   async getListingsPaginated(
     startId: number,
     limit: number,
-    activeOnly: boolean = true
+    activeOnly: boolean = true,
   ): Promise<ListedToken[]> {
     const listedTokens: ListedToken[] = [];
     const endId = startId + limit - 1;
-    
-    this.log(`Fetching listings ${startId} to ${endId} (${activeOnly ? 'active only' : 'all'})`);
-    
+
+    this.log(
+      `Fetching listings ${startId} to ${endId} (${activeOnly ? "active only" : "all"})`,
+    );
+
     // Helper to delay between calls
-    const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-    
+    const delay = (ms: number) =>
+      new Promise((resolve) => setTimeout(resolve, ms));
+
     for (let listingId = startId; listingId <= endId; listingId++) {
       try {
         const listing = await this.marketplaceContract.getListing(listingId);
@@ -498,7 +531,9 @@ export class MarketplaceSDK {
         if (!activeOnly || listing.active) {
           let tokenData;
           try {
-            tokenData = await this.getStrDomainFromCollection(Number(listing.tokenId));
+            tokenData = await this.getStrDomainFromCollection(
+              Number(listing.tokenId),
+            );
           } catch (e) {
             // Token data optional
           }
@@ -513,7 +548,7 @@ export class MarketplaceSDK {
             tokenData: tokenData || undefined,
           });
         }
-        
+
         // Small delay to avoid RPC spam
         await delay(100);
       } catch (e: any) {
@@ -523,80 +558,97 @@ export class MarketplaceSDK {
       }
     }
 
-    this.log(`Fetched ${listedTokens.length} listings from range ${startId}-${endId}`);
+    this.log(
+      `Fetched ${listedTokens.length} listings from range ${startId}-${endId}`,
+    );
     return listedTokens;
   }
 
   // Get all active listed tokens on marketplace (legacy method - for compatibility)
-  async getAllActiveListedDomainsOnMarketplaceWithTokenData(): Promise<ListedToken[]> {
+  async getAllActiveListedDomainsOnMarketplaceWithTokenData(): Promise<
+    ListedToken[]
+  > {
     try {
       let lastListingId: number = 0;
-      
+
       // Try to get lastListingId
       try {
         const result = await this.marketplaceContract.lastListingId();
         lastListingId = Number(result);
-        this.log('lastListingId:', lastListingId);
+        this.log("lastListingId:", lastListingId);
       } catch (error: any) {
-        this.warn('lastListingId() not available, using fallback method. Error:', error.message);
+        this.warn(
+          "lastListingId() not available, using fallback method. Error:",
+          error.message,
+        );
         // Only use fallback if we have a valid signer and provider
         if (this.signer && this.provider) {
           return await this.scanForListings(true);
         } else {
-          this.warn('No valid signer/provider available, returning empty array');
+          this.warn(
+            "No valid signer/provider available, returning empty array",
+          );
           return [];
         }
       }
 
       if (lastListingId === 0) {
-        this.warn('No listings found - lastListingId is 0');
+        this.warn("No listings found - lastListingId is 0");
         return [];
       }
 
       // Use pagination to fetch all (with delays)
       return await this.getListingsPaginated(1, lastListingId, true);
     } catch (error: any) {
-      this.error('Error fetching listed tokens:', error);
+      this.error("Error fetching listed tokens:", error);
       return [];
     }
   }
 
   // Fallback: Scan for listings without lastListingId
-  private async scanForListings(activeOnly: boolean = true): Promise<ListedToken[]> {
+  private async scanForListings(
+    activeOnly: boolean = true,
+  ): Promise<ListedToken[]> {
     const listedTokens: ListedToken[] = [];
     const MAX_SCAN = 10; // Further reduced to avoid RPC spam
     let consecutiveFailures = 0;
     let rpcErrorCount = 0;
-    
-    this.warn('Scanning for listings (no lastListingId available)...');
-    
+
+    this.warn("Scanning for listings (no lastListingId available)...");
+
     // Helper to delay between calls
-    const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-    
+    const delay = (ms: number) =>
+      new Promise((resolve) => setTimeout(resolve, ms));
+
     for (let listingId = 1; listingId <= MAX_SCAN; listingId++) {
       try {
         // Exponential backoff if we've hit RPC errors
         if (rpcErrorCount > 0) {
-          const backoffDelay = Math.min(1000 * Math.pow(2, rpcErrorCount), 5000);
+          const backoffDelay = Math.min(
+            1000 * Math.pow(2, rpcErrorCount),
+            5000,
+          );
           this.log(`Backing off ${backoffDelay}ms before next call...`);
           await delay(backoffDelay);
         } else {
           // Normal delay
           await delay(200); // Reduced delay
         }
-        
+
         const listing = await this.marketplaceContract.getListing(listingId);
-        
+
         // Reset failure counters on success
         consecutiveFailures = 0;
         rpcErrorCount = Math.max(0, rpcErrorCount - 1); // Gradually reduce backoff
-        
+
         // Filter by active if needed
         if (!activeOnly || listing.active) {
           let tokenData;
           try {
             await delay(200); // Delay before token data
-            tokenData = await this.getStrDomainFromCollection(Number(listing.tokenId));
+            tokenData = await this.getStrDomainFromCollection(
+              Number(listing.tokenId),
+            );
           } catch (e) {
             // Token data optional
           }
@@ -613,94 +665,118 @@ export class MarketplaceSDK {
         }
       } catch (e: any) {
         consecutiveFailures++;
-        
+
         // If RPC error, increase backoff
-        if (e.message?.includes('Internal JSON-RPC') || e.code === -32603) {
+        if (e.message?.includes("Internal JSON-RPC") || e.code === -32603) {
           rpcErrorCount++;
-          this.warn(`RPC error #${rpcErrorCount} at listing ${listingId}, backing off...`);
-          
+          this.warn(
+            `RPC error #${rpcErrorCount} at listing ${listingId}, backing off...`,
+          );
+
           // If too many RPC errors, stop early
           if (rpcErrorCount >= 3) {
             this.warn(`Too many RPC errors, stopping scan early`);
             break;
           }
         }
-        
+
         // Stop after 5 consecutive failures
         if (consecutiveFailures >= 5) {
-          this.log(`Stopped scanning at listing ${listingId} after ${consecutiveFailures} failures`);
+          this.log(
+            `Stopped scanning at listing ${listingId} after ${consecutiveFailures} failures`,
+          );
           break;
         }
       }
     }
-    
+
     this.log(`Found ${listedTokens.length} listings via scanning`);
     return listedTokens;
   }
 
   // Get all listed tokens on marketplace (legacy - for compatibility)
-  async getAllListedDomainsOnMarketplaceWithTokenData(): Promise<ListedToken[]> {
+  async getAllListedDomainsOnMarketplaceWithTokenData(): Promise<
+    ListedToken[]
+  > {
     try {
       let lastListingId: number = 0;
-      
+
       try {
         const result = await this.marketplaceContract.lastListingId();
         lastListingId = Number(result);
       } catch (error: any) {
-        this.warn('lastListingId() not available, using fallback. Error:', error.message);
+        this.warn(
+          "lastListingId() not available, using fallback. Error:",
+          error.message,
+        );
         // Only use fallback if we have a valid signer and provider
         if (this.signer && this.provider) {
           return await this.scanForListings(false);
         } else {
-          this.warn('No valid signer/provider available, returning empty array');
+          this.warn(
+            "No valid signer/provider available, returning empty array",
+          );
           return [];
         }
       }
 
       if (lastListingId === 0) {
-        this.warn('No listings found');
+        this.warn("No listings found");
         return [];
       }
 
       // Use pagination to fetch all
       return await this.getListingsPaginated(1, lastListingId, false);
     } catch (error: any) {
-      this.error('Error fetching listed tokens:', error);
+      this.error("Error fetching listed tokens:", error);
       return [];
     }
   }
 
   // Get my all listed tokens on marketplace (legacy - fetches all)
-  async getMyAllListedDomainsOnMarketplaceWithTokenData(): Promise<ListedToken[]> {
+  async getMyAllListedDomainsOnMarketplaceWithTokenData(): Promise<
+    ListedToken[]
+  > {
     try {
       const myAddress = (await this.signer.getAddress()).toLowerCase();
       let lastListingId: number = 0;
-      
+
       try {
         const result = await this.marketplaceContract.lastListingId();
         lastListingId = Number(result);
       } catch (error: any) {
-        this.warn('lastListingId() not available, using fallback. Error:', error.message);
+        this.warn(
+          "lastListingId() not available, using fallback. Error:",
+          error.message,
+        );
         // Only use fallback if we have a valid signer and provider
         if (this.signer && this.provider) {
           const allListings = await this.scanForListings(false);
-          return allListings.filter(l => l.seller.toLowerCase() === myAddress);
+          return allListings.filter(
+            (l) => l.seller.toLowerCase() === myAddress,
+          );
         } else {
-          this.warn('No valid signer/provider available, returning empty array');
+          this.warn(
+            "No valid signer/provider available, returning empty array",
+          );
           return [];
         }
       }
 
       if (lastListingId === 0) {
-        this.warn('No listings found');
+        this.warn("No listings found");
         return [];
       }
 
       // Fetch all listings for this user
-      const allListings = await this.getListingsPaginated(1, lastListingId, false);
-      return allListings.filter(l => l.seller.toLowerCase() === myAddress);
+      const allListings = await this.getListingsPaginated(
+        1,
+        lastListingId,
+        false,
+      );
+      return allListings.filter((l) => l.seller.toLowerCase() === myAddress);
     } catch (error: any) {
-      this.error('Error fetching listed tokens:', error);
+      this.error("Error fetching listed tokens:", error);
       return [];
     }
   }
@@ -709,16 +785,17 @@ export class MarketplaceSDK {
   async getDomainsPaginated(
     startTokenId: number,
     limit: number,
-    filterByOwner?: string
+    filterByOwner?: string,
   ): Promise<FormattedToken[]> {
     const tokenList: FormattedToken[] = [];
     const endTokenId = startTokenId + limit - 1;
-    
+
     this.log(`Fetching tokens ${startTokenId} to ${endTokenId}`);
-    
-    const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+    const delay = (ms: number) =>
+      new Promise((resolve) => setTimeout(resolve, ms));
     const targetOwner = filterByOwner?.toLowerCase();
-    
+
     for (let tokenId = startTokenId; tokenId <= endTokenId; tokenId++) {
       try {
         // If filtering by owner, check ownership first
@@ -729,12 +806,12 @@ export class MarketplaceSDK {
             continue;
           }
         }
-        
+
         const tokenData = await this.getStrDomainFromCollection(tokenId);
         if (tokenData) {
           tokenList.push(tokenData);
         }
-        
+
         await delay(100);
       } catch (error: any) {
         // Token doesn't exist, continue
@@ -743,38 +820,43 @@ export class MarketplaceSDK {
       }
     }
 
-    this.log(`Fetched ${tokenList.length} tokens from range ${startTokenId}-${endTokenId}`);
+    this.log(
+      `Fetched ${tokenList.length} tokens from range ${startTokenId}-${endTokenId}`,
+    );
     return tokenList;
   }
 
   // Get available fee balance from a splitter
   async getSplitterBalance(
     splitterAddress: string,
-    walletAddress: string
+    walletAddress: string,
   ): Promise<bigint | null> {
     try {
       const contractInstance = new ethers.Contract(
         splitterAddress,
         RoyaltySplitterABI,
-        this.signer
+        this.signer,
       );
       const balance = await contractInstance.ethBalance(walletAddress);
       return balance;
     } catch (error: any) {
-      this.error('Unexpected error fetching balance:', error);
+      this.error("Unexpected error fetching balance:", error);
       return null;
     }
   }
 
   // Get all splitter balances for a given wallet across the collection
-  async getSplitterBalanceOfWallet(walletAddress: string): Promise<SplitterBalance[]> {
+  async getSplitterBalanceOfWallet(
+    walletAddress: string,
+  ): Promise<SplitterBalance[]> {
     const balances: SplitterBalance[] = [];
 
     try {
-      const splitterAddresses = await this.getAllSplitterContractsFromCollection();
+      const splitterAddresses =
+        await this.getAllSplitterContractsFromCollection();
 
       if (!splitterAddresses || splitterAddresses.length === 0) {
-        this.warn('No splitter contracts found in collection.');
+        this.warn("No splitter contracts found in collection.");
         return balances;
       }
 
@@ -783,7 +865,7 @@ export class MarketplaceSDK {
           const contract = new ethers.Contract(
             splitterAddress,
             RoyaltySplitterABI,
-            this.signer
+            this.signer,
           );
           const rawBalance = await contract.ethBalance(walletAddress);
           const balance = ethers.formatEther(rawBalance);
@@ -797,12 +879,12 @@ export class MarketplaceSDK {
         } catch (innerErr: any) {
           this.warn(
             `Failed to fetch balance from splitter: ${splitterAddress}`,
-            innerErr.message
+            innerErr.message,
           );
         }
       }
     } catch (error: any) {
-      this.error('Error fetching splitter balances:', error);
+      this.error("Error fetching splitter balances:", error);
     }
 
     return balances;
@@ -811,12 +893,15 @@ export class MarketplaceSDK {
   // Owner only - Approve token for sale
   async approveTokenForSale(tokenId: number): Promise<string | null> {
     try {
-      const tx = await this.nftContract.approve(this.marketplaceAddress, tokenId);
+      const tx = await this.nftContract.approve(
+        this.marketplaceAddress,
+        tokenId,
+      );
       const receipt = await tx.wait();
       return receipt.hash;
     } catch (error: any) {
       this.error(
-        `Error approve your NFT tokenId: ${tokenId}, check your ownership`
+        `Error approve your NFT tokenId: ${tokenId}, check your ownership`,
       );
       return null;
     }
@@ -828,7 +913,7 @@ export class MarketplaceSDK {
       const contract = new ethers.Contract(
         splitterAddress,
         RoyaltySplitterABI,
-        this.signer
+        this.signer,
       );
       const walletAddress = await this.signer.getAddress();
       const rawBalance = await contract.ethBalance(walletAddress);
@@ -843,7 +928,7 @@ export class MarketplaceSDK {
       const tx = await contract.withdraw();
       if (!tx || !tx.hash) {
         this.warn(
-          `No transaction hash returned from withdraw() on ${splitterAddress}`
+          `No transaction hash returned from withdraw() on ${splitterAddress}`,
         );
         return null;
       }
@@ -851,7 +936,7 @@ export class MarketplaceSDK {
       const receipt = await tx.wait();
 
       this.warn(
-        `Withdrawn from splitter ${splitterAddress} | Tx: ${receipt.hash} | Amount: ${balance}`
+        `Withdrawn from splitter ${splitterAddress} | Tx: ${receipt.hash} | Amount: ${balance}`,
       );
 
       return {
@@ -861,7 +946,7 @@ export class MarketplaceSDK {
       };
     } catch (err: any) {
       this.warn(
-        `Failed to withdraw from splitter: ${splitterAddress} | ${err.message}`
+        `Failed to withdraw from splitter: ${splitterAddress} | ${err.message}`,
       );
       return null;
     }
@@ -871,10 +956,11 @@ export class MarketplaceSDK {
   async withdrawAllRoyaltyFees(): Promise<any[] | null> {
     try {
       const walletAddress = await this.signer.getAddress();
-      const splitterBalances = await this.getSplitterBalanceOfWallet(walletAddress);
+      const splitterBalances =
+        await this.getSplitterBalanceOfWallet(walletAddress);
 
       if (!splitterBalances || splitterBalances.length === 0) {
-        this.warn('No splitter contracts with available balances found.');
+        this.warn("No splitter contracts with available balances found.");
         return null;
       }
 
@@ -889,7 +975,7 @@ export class MarketplaceSDK {
 
       return receipts;
     } catch (error: any) {
-      this.error('Error withdrawing all royalty fees:', error);
+      this.error("Error withdrawing all royalty fees:", error);
       return null;
     }
   }
@@ -901,7 +987,7 @@ export class MarketplaceSDK {
     try {
       if (!isAdmin) {
         this.warn(
-          'You are not an admin of the Marketplace contract. Withdraw not allowed.'
+          "You are not an admin of the Marketplace contract. Withdraw not allowed.",
         );
         return null;
       }
@@ -909,11 +995,15 @@ export class MarketplaceSDK {
       const tx = await this.marketplaceContract.withdrawFees();
       const receipt = await tx.wait();
 
-      this.warn(`Marketplace fees withdrawn successfully! Tx hash: ${receipt.hash}`);
+      this.warn(
+        `Marketplace fees withdrawn successfully! Tx hash: ${receipt.hash}`,
+      );
 
       return receipt.hash;
     } catch (error: any) {
-      this.error('Error withdrawing marketplace fees, or check the fees balance');
+      this.error(
+        "Error withdrawing marketplace fees, or check the fees balance",
+      );
       return null;
     }
   }
@@ -922,13 +1012,15 @@ export class MarketplaceSDK {
   async isAdmin(): Promise<boolean> {
     try {
       const ADMIN_ROLE =
-        '0x0000000000000000000000000000000000000000000000000000000000000000';
+        "0x0000000000000000000000000000000000000000000000000000000000000000";
       const isAdmin = await this.nftContract.hasRole(
         ADMIN_ROLE,
-        await this.signer.getAddress()
+        await this.signer.getAddress(),
       );
       if (!isAdmin) {
-        this.warn('Please connect with an admin account before running isAdmin method.');
+        this.warn(
+          "Please connect with an admin account before running isAdmin method.",
+        );
       }
       return isAdmin;
     } catch (e) {
@@ -937,7 +1029,10 @@ export class MarketplaceSDK {
   }
 
   // Admin only - Mint domain
-  async mintDomain(originalCreator: string, URI: string): Promise<string | null> {
+  async mintDomain(
+    originalCreator: string,
+    URI: string,
+  ): Promise<string | null> {
     if (!(await this.isAdmin())) return null;
 
     try {
@@ -946,7 +1041,7 @@ export class MarketplaceSDK {
       return receipt.hash;
     } catch (error: any) {
       this.error(
-        'Error minting domain NFT, check you are the owner of the contract, or have minter role'
+        "Error minting domain NFT, check you are the owner of the contract, or have minter role",
       );
       return null;
     }

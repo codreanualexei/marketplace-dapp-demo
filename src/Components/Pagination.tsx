@@ -1,5 +1,5 @@
-import React from 'react';
-import './Pagination.css';
+import React from "react";
+import "./Pagination.css";
 
 interface PaginationProps {
   currentPage: number;
@@ -32,7 +32,7 @@ const Pagination: React.FC<PaginationProps> = ({
       pages.push(1);
 
       if (currentPage > 3) {
-        pages.push('...');
+        pages.push("...");
       }
 
       for (
@@ -44,7 +44,7 @@ const Pagination: React.FC<PaginationProps> = ({
       }
 
       if (currentPage < totalPages - 2) {
-        pages.push('...');
+        pages.push("...");
       }
 
       pages.push(totalPages);
@@ -75,11 +75,11 @@ const Pagination: React.FC<PaginationProps> = ({
           {getPageNumbers().map((page, index) => (
             <button
               key={index}
-              className={`pagination-number ${page === currentPage ? 'active' : ''} ${
-                page === '...' ? 'dots' : ''
+              className={`pagination-number ${page === currentPage ? "active" : ""} ${
+                page === "..." ? "dots" : ""
               }`}
-              onClick={() => typeof page === 'number' && onPageChange(page)}
-              disabled={page === '...'}
+              onClick={() => typeof page === "number" && onPageChange(page)}
+              disabled={page === "..."}
             >
               {page}
             </button>
@@ -99,4 +99,3 @@ const Pagination: React.FC<PaginationProps> = ({
 };
 
 export default Pagination;
-
