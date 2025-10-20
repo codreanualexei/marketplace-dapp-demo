@@ -51,6 +51,16 @@
   opacity: 0.95;
 }
 
+.walletconnect-help {
+  margin-top: 8px !important;
+  font-size: 13px !important;
+  opacity: 0.9 !important;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 8px 12px;
+  border-radius: 6px;
+  border-left: 3px solid rgba(255, 255, 255, 0.3);
+}
+
 .switch-button {
   padding: 12px 32px;
   background: white;
@@ -64,9 +74,71 @@
   flex-shrink: 0;
 }
 
-.switch-button:hover {
+.switch-button:hover:not(:disabled) {
   transform: scale(1.05);
   box-shadow: 0 4px 12px rgba(255, 255, 255, 0.3);
+}
+
+.switch-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.switch-actions {
+  display: flex;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.help-button {
+  padding: 12px 24px;
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.help-button:hover {
+  background: rgba(255, 255, 255, 0.3);
+  transform: translateY(-1px);
+}
+
+.manual-help {
+  margin-top: 20px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.manual-help h4 {
+  margin: 0 0 12px 0;
+  color: white;
+  font-size: 16px;
+}
+
+.network-config {
+  background: rgba(0, 0, 0, 0.2);
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+
+.network-config p {
+  margin: 4px 0;
+  font-size: 13px;
+  font-family: monospace;
+}
+
+.help-instructions {
+  font-size: 14px;
+  line-height: 1.5;
+  margin: 0;
 }
 
 @media (max-width: 768px) {
@@ -90,10 +162,28 @@
     font-size: 13px;
   }
 
-  .switch-button {
+  .switch-actions {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .switch-button,
+  .help-button {
     width: 100%;
     padding: 10px 20px;
     font-size: 14px;
   }
-}
 
+  .manual-help {
+    margin-top: 16px;
+    padding: 12px;
+  }
+
+  .network-config {
+    padding: 8px;
+  }
+
+  .network-config p {
+    font-size: 12px;
+  }
+}

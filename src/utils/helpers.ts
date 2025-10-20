@@ -1,4 +1,4 @@
-import { ethers } from 'ethers';
+import { ethers } from "ethers";
 
 /**
  * Format wallet address to short form
@@ -10,9 +10,9 @@ import { ethers } from 'ethers';
 export const formatAddress = (
   address: string,
   startChars: number = 6,
-  endChars: number = 4
+  endChars: number = 4,
 ): string => {
-  if (!address) return '';
+  if (!address) return "";
   return `${address.slice(0, startChars)}...${address.slice(-endChars)}`;
 };
 
@@ -22,13 +22,16 @@ export const formatAddress = (
  * @param decimals - Number of decimal places (default: 4)
  * @returns Formatted ETH value
  */
-export const formatEth = (value: string | bigint, decimals: number = 4): string => {
+export const formatEth = (
+  value: string | bigint,
+  decimals: number = 4,
+): string => {
   try {
     const eth = ethers.formatEther(value);
     return parseFloat(eth).toFixed(decimals);
   } catch (error) {
-    console.error('Error formatting ETH:', error);
-    return '0.0000';
+    console.error("Error formatting ETH:", error);
+    return "0.0000";
   }
 };
 
@@ -41,7 +44,7 @@ export const parseEth = (value: string): bigint => {
   try {
     return ethers.parseEther(value);
   } catch (error) {
-    console.error('Error parsing ETH:', error);
+    console.error("Error parsing ETH:", error);
     return BigInt(0);
   }
 };
@@ -53,17 +56,17 @@ export const parseEth = (value: string): bigint => {
  */
 export const getNetworkName = (chainId: number): string => {
   const networks: { [key: number]: string } = {
-    1: 'Ethereum Mainnet',
-    5: 'Goerli Testnet',
-    11155111: 'Sepolia Testnet',
-    137: 'Polygon Mainnet',
-    80001: 'Mumbai Testnet',
-    56: 'BSC Mainnet',
-    97: 'BSC Testnet',
-    42161: 'Arbitrum One',
-    421613: 'Arbitrum Goerli',
-    10: 'Optimism',
-    420: 'Optimism Goerli',
+    1: "Ethereum Mainnet",
+    5: "Goerli Testnet",
+    11155111: "Sepolia Testnet",
+    137: "Polygon Mainnet",
+    80001: "Mumbai Testnet",
+    56: "BSC Mainnet",
+    97: "BSC Testnet",
+    42161: "Arbitrum One",
+    421613: "Arbitrum Goerli",
+    10: "Optimism",
+    420: "Optimism Goerli",
   };
 
   return networks[chainId] || `Unknown Network (${chainId})`;
@@ -90,13 +93,13 @@ export const isValidAddress = (address: string): boolean => {
  */
 export const waitForTransaction = async (
   tx: ethers.TransactionResponse,
-  confirmations: number = 1
+  confirmations: number = 1,
 ): Promise<ethers.TransactionReceipt | null> => {
   try {
     const receipt = await tx.wait(confirmations);
     return receipt;
   } catch (error) {
-    console.error('Transaction failed:', error);
+    console.error("Transaction failed:", error);
     return null;
   }
 };
@@ -108,10 +111,10 @@ export const waitForTransaction = async (
  */
 export const formatDate = (timestamp: number): string => {
   const date = new Date(timestamp * 1000);
-  return date.toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
+  return date.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
   });
 };
 
@@ -128,10 +131,10 @@ export const timeAgo = (timestamp: number): string => {
   const hours = Math.floor(minutes / 60);
   const days = Math.floor(hours / 24);
 
-  if (days > 0) return `${days} day${days > 1 ? 's' : ''} ago`;
-  if (hours > 0) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
-  if (minutes > 0) return `${minutes} minute${minutes > 1 ? 's' : ''} ago`;
-  return 'just now';
+  if (days > 0) return `${days} day${days > 1 ? "s" : ""} ago`;
+  if (hours > 0) return `${hours} hour${hours > 1 ? "s" : ""} ago`;
+  if (minutes > 0) return `${minutes} minute${minutes > 1 ? "s" : ""} ago`;
+  return "just now";
 };
 
 /**
@@ -144,7 +147,7 @@ export const copyToClipboard = async (text: string): Promise<boolean> => {
     await navigator.clipboard.writeText(text);
     return true;
   } catch (error) {
-    console.error('Failed to copy:', error);
+    console.error("Failed to copy:", error);
     return false;
   }
 };
@@ -160,4 +163,3 @@ export const formatNumber = (num: number): string => {
   if (num >= 1e3) return `${(num / 1e3).toFixed(1)}K`;
   return num.toString();
 };
-

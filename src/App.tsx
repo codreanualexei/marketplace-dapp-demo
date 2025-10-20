@@ -1,34 +1,39 @@
-import React, { useState } from 'react';
-import { WalletProvider } from './contexts/WalletContext';
-import Header from './Components/Header';
-import NetworkChecker from './Components/NetworkChecker';
-import Home from './Pages/Home';
-import Marketplace from './Pages/Marketplace';
-import MyDomains from './Pages/MyDomains';
-import MyListings from './Pages/MyListings';
-import Royalties from './Pages/Royalties';
-import Mint from './Pages/Mint';
-import Debug from './Pages/Debug';
-import './App.css';
+import React, { useState } from "react";
+import { WalletProvider, useWallet } from "./contexts/WalletContext";
+import Header from "./Components/Header";
+import NetworkChecker from "./Components/NetworkChecker";
+import ErrorDisplay from "./Components/ErrorDisplay";
+import Home from "./Pages/Home";
+import Marketplace from "./Pages/Marketplace";
+import MyDomains from "./Pages/MyDomains";
+import MyListings from "./Pages/MyListings";
+import Royalties from "./Pages/Royalties";
+import Mint from "./Pages/Mint";
+import Debug from "./Pages/Debug";
+import "./App.css";
 
-function App() {
-  const [currentPage, setCurrentPage] = useState('home');
+// Component that displays wallet errors
+const AppContent: React.FC<{
+  currentPage: string;
+  setCurrentPage: (page: string) => void;
+}> = ({ currentPage, setCurrentPage }) => {
+  const { error, setError } = useWallet();
 
   const renderPage = () => {
     switch (currentPage) {
-      case 'home':
+      case "home":
         return <Home onNavigate={setCurrentPage} />;
-      case 'marketplace':
+      case "marketplace":
         return <Marketplace />;
-      case 'my-domains':
+      case "my-domains":
         return <MyDomains />;
-      case 'my-listings':
+      case "my-listings":
         return <MyListings />;
-      case 'royalties':
+      case "royalties":
         return <Royalties />;
-      case 'mint':
+      case "mint":
         return <Mint />;
-      case 'debug':
+      case "debug":
         return <Debug />;
       default:
         return <Home onNavigate={setCurrentPage} />;
@@ -36,12 +41,21 @@ function App() {
   };
 
   return (
+    <div className="App">
+      <Header currentPage={currentPage} onNavigate={setCurrentPage} />
+      <NetworkChecker />
+      {renderPage()}
+      <ErrorDisplay error={error} onDismiss={() => setError(null)} />
+    </div>
+  );
+};
+
+function App() {
+  const [currentPage, setCurrentPage] = useState("home");
+
+  return (
     <WalletProvider>
-      <div className="App">
-        <Header currentPage={currentPage} onNavigate={setCurrentPage} />
-        <NetworkChecker />
-        {renderPage()}
-      </div>
+      <AppContent currentPage={currentPage} setCurrentPage={setCurrentPage} />
     </WalletProvider>
   );
 }

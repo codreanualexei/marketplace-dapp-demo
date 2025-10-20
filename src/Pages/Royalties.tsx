@@ -1,15 +1,17 @@
-import React, { useState, useEffect } from 'react';
-import { useWallet } from '../contexts/WalletContext';
-import { useMarketplaceSDK } from '../hooks/useMarketplaceSDK';
-import { SplitterBalance } from '../sdk/MarketplaceSDK';
-import { ethers } from 'ethers';
-import './Royalties.css';
+import React, { useState, useEffect } from "react";
+import { useWallet } from "../contexts/WalletContext";
+import { useMarketplaceSDK } from "../hooks/useMarketplaceSDK";
+import { SplitterBalance } from "../sdk/MarketplaceSDK";
+import { ethers } from "ethers";
+import "./Royalties.css";
 
 const Royalties: React.FC = () => {
   const { account } = useWallet();
   const sdk = useMarketplaceSDK();
-  const [splitterBalances, setSplitterBalances] = useState<SplitterBalance[]>([]);
-  const [marketplaceFees, setMarketplaceFees] = useState<string>('0');
+  const [splitterBalances, setSplitterBalances] = useState<SplitterBalance[]>(
+    [],
+  );
+  const [marketplaceFees, setMarketplaceFees] = useState<string>("0");
   const [isAdmin, setIsAdmin] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -36,19 +38,20 @@ const Royalties: React.FC = () => {
           setMarketplaceFees(ethers.formatEther(fees));
         }
       } catch (feeError) {
-        console.warn('Could not fetch marketplace fees:', feeError);
-        setMarketplaceFees('0');
+        console.warn("Could not fetch marketplace fees:", feeError);
+        setMarketplaceFees("0");
       }
 
       // Skip splitter balances for now to avoid RPC rate limiting
       // User can manually check if needed
-      console.log('Skipping automatic splitter balance check (can cause RPC errors)');
+      console.log(
+        "Skipping automatic splitter balance check (can cause RPC errors)",
+      );
       setSplitterBalances([]);
-      
     } catch (err: any) {
-      console.error('Error loading balances:', err);
+      console.error("Error loading balances:", err);
       setSplitterBalances([]);
-      setMarketplaceFees('0');
+      setMarketplaceFees("0");
     } finally {
       setIsLoading(false);
     }
@@ -60,7 +63,7 @@ const Royalties: React.FC = () => {
       const admin = await sdk.isAdmin();
       setIsAdmin(admin);
     } catch (err) {
-      console.error('Error checking admin status:', err);
+      console.error("Error checking admin status:", err);
     }
   };
 
@@ -68,25 +71,27 @@ const Royalties: React.FC = () => {
     if (!sdk) return;
 
     const confirmed = window.confirm(
-      `Withdraw your royalties from this splitter?`
+      `Withdraw your royalties from this splitter?`,
     );
-    
+
     if (!confirmed) return;
 
     setWithdrawing(splitterAddress);
 
     try {
       const result = await sdk.withdrawRoyaltyFromSplitter(splitterAddress);
-      
+
       if (result) {
-        alert(`Withdrawal successful! Transaction: ${result.transactionHash}\nAmount: ${result.withdrawn} MATIC`);
+        alert(
+          `Withdrawal successful! Transaction: ${result.transactionHash}\nAmount: ${result.withdrawn} MATIC`,
+        );
         await loadBalances();
       } else {
-        alert('Withdrawal failed. Please try again.');
+        alert("Withdrawal failed. Please try again.");
       }
     } catch (err: any) {
-      console.error('Error withdrawing:', err);
-      alert(`Error: ${err.message || 'Failed to withdraw'}`);
+      console.error("Error withdrawing:", err);
+      alert(`Error: ${err.message || "Failed to withdraw"}`);
     } finally {
       setWithdrawing(null);
     }
@@ -97,33 +102,35 @@ const Royalties: React.FC = () => {
 
     const totalAmount = splitterBalances.reduce(
       (sum, b) => sum + parseFloat(b.balance),
-      0
+      0,
     );
 
     const confirmed = window.confirm(
-      `Withdraw all royalties from ${splitterBalances.length} splitter(s)?\nTotal: ${totalAmount.toFixed(4)} MATIC`
+      `Withdraw all royalties from ${splitterBalances.length} splitter(s)?\nTotal: ${totalAmount.toFixed(4)} MATIC`,
     );
-    
+
     if (!confirmed) return;
 
-    setWithdrawing('all');
+    setWithdrawing("all");
 
     try {
       const results = await sdk.withdrawAllRoyaltyFees();
-      
+
       if (results && results.length > 0) {
         const totalWithdrawn = results.reduce(
           (sum, r) => sum + parseFloat(r.withdrawn),
-          0
+          0,
         );
-        alert(`Successfully withdrew from ${results.length} splitter(s)!\nTotal: ${totalWithdrawn.toFixed(4)} MATIC`);
+        alert(
+          `Successfully withdrew from ${results.length} splitter(s)!\nTotal: ${totalWithdrawn.toFixed(4)} MATIC`,
+        );
         await loadBalances();
       } else {
-        alert('No funds to withdraw or withdrawal failed.');
+        alert("No funds to withdraw or withdrawal failed.");
       }
     } catch (err: any) {
-      console.error('Error withdrawing all:', err);
-      alert(`Error: ${err.message || 'Failed to withdraw'}`);
+      console.error("Error withdrawing all:", err);
+      alert(`Error: ${err.message || "Failed to withdraw"}`);
     } finally {
       setWithdrawing(null);
     }
@@ -133,25 +140,29 @@ const Royalties: React.FC = () => {
     if (!sdk) return;
 
     const confirmed = window.confirm(
-      `Withdraw marketplace fees?\nAmount: ${marketplaceFees} MATIC`
+      `Withdraw marketplace fees?\nAmount: ${marketplaceFees} MATIC`,
     );
-    
+
     if (!confirmed) return;
 
-    setWithdrawing('marketplace');
+    setWithdrawing("marketplace");
 
     try {
       const txHash = await sdk.withdrawMarketPlaceFees();
-      
+
       if (txHash) {
-        alert(`Marketplace fees withdrawn successfully! Transaction: ${txHash}`);
+        alert(
+          `Marketplace fees withdrawn successfully! Transaction: ${txHash}`,
+        );
         await loadBalances();
       } else {
-        alert('Withdrawal failed. Make sure you are an admin and there are fees to withdraw.');
+        alert(
+          "Withdrawal failed. Make sure you are an admin and there are fees to withdraw.",
+        );
       }
     } catch (err: any) {
-      console.error('Error withdrawing marketplace fees:', err);
-      alert(`Error: ${err.message || 'Failed to withdraw marketplace fees'}`);
+      console.error("Error withdrawing marketplace fees:", err);
+      alert(`Error: ${err.message || "Failed to withdraw marketplace fees"}`);
     } finally {
       setWithdrawing(null);
     }
@@ -195,11 +206,7 @@ const Royalties: React.FC = () => {
           <p>Manage your earnings from the marketplace</p>
         </div>
 
-        {error && (
-          <div className="error-banner">
-            {error}
-          </div>
-        )}
+        {error && <div className="error-banner">{error}</div>}
 
         {/* Summary Cards */}
         <div className="summary-cards">
@@ -207,7 +214,9 @@ const Royalties: React.FC = () => {
             <div className="card-icon">💰</div>
             <div className="card-content">
               <span className="card-label">Total Royalties</span>
-              <span className="card-value">{getTotalRoyalties().toFixed(4)} MATIC</span>
+              <span className="card-value">
+                {getTotalRoyalties().toFixed(4)} MATIC
+              </span>
             </div>
           </div>
 
@@ -224,7 +233,9 @@ const Royalties: React.FC = () => {
               <div className="card-icon">⚙️</div>
               <div className="card-content">
                 <span className="card-label">Marketplace Fees</span>
-                <span className="card-value">{parseFloat(marketplaceFees).toFixed(4)} MATIC</span>
+                <span className="card-value">
+                  {parseFloat(marketplaceFees).toFixed(4)} MATIC
+                </span>
               </div>
             </div>
           )}
@@ -234,32 +245,35 @@ const Royalties: React.FC = () => {
         <section className="royalties-section">
           <div className="section-header">
             <h2 className="section-title">Your Royalties (Creator/Minter)</h2>
-            <button 
+            <button
               className="action-button secondary"
               onClick={async () => {
                 if (!sdk || !account) return;
                 setIsLoading(true);
                 try {
-                  const balances = await sdk.getSplitterBalanceOfWallet(account);
+                  const balances =
+                    await sdk.getSplitterBalanceOfWallet(account);
                   setSplitterBalances(balances || []);
                 } catch (err) {
-                  console.error('Error loading splitters:', err);
-                  alert('Error loading royalties. The collection might be empty or RPC is rate limiting.');
+                  console.error("Error loading splitters:", err);
+                  alert(
+                    "Error loading royalties. The collection might be empty or RPC is rate limiting.",
+                  );
                 } finally {
                   setIsLoading(false);
                 }
               }}
               disabled={isLoading}
             >
-              {isLoading ? 'Loading...' : 'Check Royalty Balances'}
+              {isLoading ? "Loading..." : "Check Royalty Balances"}
             </button>
             {splitterBalances.length > 0 && getTotalRoyalties() > 0 && (
-              <button 
+              <button
                 className="action-button primary"
                 onClick={handleWithdrawAll}
                 disabled={withdrawing !== null}
               >
-                {withdrawing === 'all' ? 'Withdrawing All...' : 'Withdraw All'}
+                {withdrawing === "all" ? "Withdrawing All..." : "Withdraw All"}
               </button>
             )}
           </div>
@@ -268,7 +282,9 @@ const Royalties: React.FC = () => {
             <div className="empty-state">
               <h3>Click "Check Royalty Balances" to scan</h3>
               <p>This will scan the collection for your royalty earnings</p>
-              <small style={{ color: '#999', marginTop: '8px', display: 'block' }}>
+              <small
+                style={{ color: "#999", marginTop: "8px", display: "block" }}
+              >
                 Note: May take time if collection is large
               </small>
             </div>
@@ -279,19 +295,25 @@ const Royalties: React.FC = () => {
                   <div className="royalty-info">
                     <div className="info-row">
                       <span className="label">Splitter Contract:</span>
-                      <span className="value">{formatAddress(balance.splitter)}</span>
+                      <span className="value">
+                        {formatAddress(balance.splitter)}
+                      </span>
                     </div>
                     <div className="info-row">
                       <span className="label">Available Balance:</span>
-                      <span className="value price">{balance.balance} MATIC</span>
+                      <span className="value price">
+                        {balance.balance} MATIC
+                      </span>
                     </div>
                   </div>
-                  <button 
+                  <button
                     className="action-button secondary"
                     onClick={() => handleWithdrawFromSplitter(balance.splitter)}
                     disabled={withdrawing === balance.splitter}
                   >
-                    {withdrawing === balance.splitter ? 'Withdrawing...' : 'Withdraw'}
+                    {withdrawing === balance.splitter
+                      ? "Withdrawing..."
+                      : "Withdraw"}
                   </button>
                 </div>
               ))}
@@ -310,18 +332,26 @@ const Royalties: React.FC = () => {
               <div className="admin-info">
                 <div className="info-item">
                   <span className="label">Accumulated Fees:</span>
-                  <span className="value price">{parseFloat(marketplaceFees).toFixed(4)} MATIC</span>
+                  <span className="value price">
+                    {parseFloat(marketplaceFees).toFixed(4)} MATIC
+                  </span>
                 </div>
                 <p className="info-text">
-                  As the marketplace owner, you can withdraw accumulated platform fees.
+                  As the marketplace owner, you can withdraw accumulated
+                  platform fees.
                 </p>
               </div>
-              <button 
+              <button
                 className="action-button primary large"
                 onClick={handleWithdrawMarketplaceFees}
-                disabled={withdrawing === 'marketplace' || parseFloat(marketplaceFees) === 0}
+                disabled={
+                  withdrawing === "marketplace" ||
+                  parseFloat(marketplaceFees) === 0
+                }
               >
-                {withdrawing === 'marketplace' ? 'Withdrawing...' : 'Withdraw Marketplace Fees'}
+                {withdrawing === "marketplace"
+                  ? "Withdrawing..."
+                  : "Withdraw Marketplace Fees"}
               </button>
             </div>
           </section>
@@ -330,10 +360,23 @@ const Royalties: React.FC = () => {
         <div className="info-box">
           <h3>ℹ️ About Royalties</h3>
           <ul>
-            <li><strong>Creator Royalties:</strong> Earned when domains you created are resold</li>
-            <li><strong>Minter Royalties:</strong> Earned from NFTs you minted</li>
-            <li><strong>Splitter Contracts:</strong> Automatically distribute royalties to creators and minters</li>
-            {isAdmin && <li><strong>Marketplace Fees:</strong> Platform fees from all sales (admin only)</li>}
+            <li>
+              <strong>Creator Royalties:</strong> Earned when domains you
+              created are resold
+            </li>
+            <li>
+              <strong>Minter Royalties:</strong> Earned from NFTs you minted
+            </li>
+            <li>
+              <strong>Splitter Contracts:</strong> Automatically distribute
+              royalties to creators and minters
+            </li>
+            {isAdmin && (
+              <li>
+                <strong>Marketplace Fees:</strong> Platform fees from all sales
+                (admin only)
+              </li>
+            )}
           </ul>
         </div>
       </div>
@@ -342,4 +385,3 @@ const Royalties: React.FC = () => {
 };
 
 export default Royalties;
-
