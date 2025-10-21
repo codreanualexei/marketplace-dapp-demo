@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useWallet } from "../contexts/WalletContext";
 import { useMarketplaceSDK } from "../hooks/useMarketplaceSDK";
 import { ListedToken } from "../sdk/MarketplaceSDK";
@@ -9,14 +9,71 @@ const ITEMS_PER_PAGE = 12;
 
 const Marketplace: React.FC = () => {
   const { account } = useWallet();
-  const sdk = useMarketplaceSDK();
+  const { sdk, isLoading: sdkLoading, error: sdkError } = useMarketplaceSDK();
   const [listedDomains, setListedDomains] = useState<ListedToken[]>([]);
   const [totalListings, setTotalListings] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // Marketplace shows only active listings
   const [buyingListingId, setBuyingListingId] = useState<number | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
+  
+  // Use refs to track loading states and prevent infinite loops
+  const isLoadingCountRef = useRef(false);
+  const isLoadingPageRef = useRef(false);
+  const hasLoadedCountRef = useRef(false);
+
+  const loadTotalCount = useCallback(async () => {
+    if (!sdk || isLoadingCountRef.current) return;
+
+    isLoadingCountRef.current = true;
+    try {
+      console.log("Loading total listing count with optimized Alchemy-enhanced SDK...");
+      const startTime = Date.now();
+      
+      const count = await sdk.getActiveListingCountOptimized();
+      
+      const endTime = Date.now();
+      console.log(`Loaded listing count in ${endTime - startTime}ms:`, count);
+
+      setTotalListings(count);
+      setCurrentPage(1);
+      hasLoadedCountRef.current = true;
+    } catch (err: any) {
+      console.error("Error loading count:", err);
+      setError("Failed to load listing count");
+    } finally {
+      isLoadingCountRef.current = false;
+    }
+  }, [sdk]);
+
+  const loadCurrentPage = useCallback(async () => {
+    if (!sdk || isLoadingPageRef.current) return;
+
+    isLoadingPageRef.current = true;
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      console.log(`Loading page ${currentPage} with optimized Alchemy-enhanced SDK...`);
+      const startTime = Date.now();
+      
+      const domains = await sdk.getActiveListingsPageOptimized(
+        currentPage,
+        ITEMS_PER_PAGE,
+      );
+      
+      const endTime = Date.now();
+      console.log(`Loaded page ${currentPage} in ${endTime - startTime}ms:`, domains);
+
+      setListedDomains(domains);
+    } catch (err: any) {
+      console.error("Error loading marketplace:", err);
+      setError("Failed to load marketplace listings");
+    } finally {
+      setIsLoading(false);
+      isLoadingPageRef.current = false;
+    }
+  }, [sdk, currentPage]);
 
   // Reset marketplace data when wallet changes
   useEffect(() => {
@@ -26,83 +83,36 @@ const Marketplace: React.FC = () => {
       setTotalListings(0);
       setCurrentPage(1);
       setError(null);
+      // Reset refs
+      isLoadingCountRef.current = false;
+      isLoadingPageRef.current = false;
+      hasLoadedCountRef.current = false;
     }
   }, [sdk, account]);
 
-  // Load total active count first
+  // Load total active count first - only run once when SDK and account are available
   useEffect(() => {
-    if (sdk && account) {
-      // Only load when both SDK and account are available
-      console.log(
-        "Marketplace: SDK and account available, loading total count",
-      );
+    if (sdk && account && !hasLoadedCountRef.current && !isLoadingCountRef.current) {
+      console.log("Marketplace: SDK and account available, loading total count");
       loadTotalCount();
-    } else {
+    } else if (!sdk || !account) {
       console.log("Marketplace: SDK or account not available:", {
         hasSDK: !!sdk,
         hasAccount: !!account,
       });
+      setIsLoading(false);
     }
-  }, [sdk, account]);
+  }, [sdk, account]); // Removed loadTotalCount from dependencies
 
-  // Load page data when page changes
+  // Load page data when page changes or when totalListings is available
   useEffect(() => {
-    if (sdk && account && totalListings > 0) {
-      // Only load when all required data is available
+    if (sdk && account && totalListings > 0 && !isLoadingPageRef.current) {
       loadCurrentPage();
-    } else if (sdk && account) {
+    } else if (sdk && account && totalListings === 0 && hasLoadedCountRef.current) {
+      // If we have SDK and account but no listings, stop loading
       setIsLoading(false);
     }
-  }, [sdk, account, currentPage, totalListings]);
-
-  const loadTotalCount = async () => {
-    if (!sdk || isLoading) return; // Prevent multiple simultaneous calls
-
-    setIsLoading(true);
-    try {
-      console.log("Loading total listing count...");
-      // Count only active listings (scan-based)
-      const count = await sdk.getActiveListingCount();
-      console.log("Total listings count:", count);
-
-      setTotalListings(count);
-      setCurrentPage(1);
-    } catch (err: any) {
-      console.error("Error loading count:", err);
-      setError("Failed to load listing count");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const loadCurrentPage = async () => {
-    if (!sdk || isLoading) return; // Prevent multiple simultaneous calls
-
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      // Calculate which listings to fetch for current page
-      const startId = (currentPage - 1) * ITEMS_PER_PAGE + 1;
-
-      // Fetch only the active listings for this page (scan from last)
-      const domains = await sdk.getActiveListingsPage(
-        currentPage,
-        ITEMS_PER_PAGE,
-      );
-
-      setListedDomains(domains);
-      console.log(
-        `Loaded page ${currentPage}: listings ${startId}-${startId + ITEMS_PER_PAGE - 1}`,
-        domains,
-      );
-    } catch (err: any) {
-      console.error("Error loading marketplace:", err);
-      setError("Failed to load marketplace listings");
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  }, [sdk, account, currentPage, totalListings]); // Removed loadCurrentPage from dependencies
 
   const handleBuy = async (listing: ListedToken) => {
     if (!sdk || !account) {
@@ -119,18 +129,42 @@ const Marketplace: React.FC = () => {
     setBuyingListingId(listing.listingId);
 
     try {
+      console.log(`Starting purchase for listing ${listing.listingId}...`);
       const txHash = await sdk.buyToken(listing.listingId);
 
       if (txHash) {
+        console.log(`Purchase successful! Transaction: ${txHash}`);
         alert(`Purchase successful! Transaction: ${txHash}`);
         // Reload current page
         await loadCurrentPage();
       } else {
+        console.error("Purchase failed - no transaction hash returned");
         alert("Purchase failed. Please try again.");
       }
     } catch (err: any) {
       console.error("Error buying token:", err);
-      alert(`Error: ${err.message || "Failed to buy domain"}`);
+      
+      // Show more detailed error message
+      let errorMessage = "Failed to buy domain";
+      
+      if (err.message) {
+        errorMessage = err.message;
+        
+        // Add helpful suggestions based on error type
+        if (err.message.includes("insufficient")) {
+          errorMessage += "\n\n💡 Tip: Get testnet MATIC from https://faucet.polygon.technology/";
+        } else if (err.message.includes("rejected")) {
+          errorMessage += "\n\n💡 Tip: Make sure to approve the transaction in your wallet.";
+        } else if (err.message.includes("timeout")) {
+          errorMessage += "\n\n💡 Tip: The transaction may still be processing. Check your wallet or try again in a few minutes.";
+        } else if (err.message.includes("network")) {
+          errorMessage += "\n\n💡 Tip: Check your internet connection and try again.";
+        } else if (err.message.includes("confirmation failed")) {
+          errorMessage += "\n\n💡 Tip: The transaction may have succeeded but confirmation failed. Check your wallet or refresh the page.";
+        }
+      }
+      
+      alert(`Error: ${errorMessage}`);
     } finally {
       setBuyingListingId(null);
     }
@@ -144,21 +178,31 @@ const Marketplace: React.FC = () => {
     return account && seller.toLowerCase() === account.toLowerCase();
   };
 
-  // Pagination logic (smart - data already paginated from SDK)
+  // Pagination logic
   const totalPages = Math.ceil(totalListings / ITEMS_PER_PAGE);
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
     window.scrollTo({ top: 0, behavior: "smooth" });
-    // Data will reload via useEffect
   };
 
-  if (isLoading) {
+  if (sdkLoading) {
     return (
       <div className="marketplace">
         <div className="loading">
           <div className="spinner"></div>
-          <p>Loading marketplace...</p>
+          <p>Initializing Alchemy SDK...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (sdkError) {
+    return (
+      <div className="marketplace">
+        <div className="error-message">
+          <h3>SDK Error</h3>
+          <p>{sdkError}</p>
         </div>
       </div>
     );
@@ -172,6 +216,17 @@ const Marketplace: React.FC = () => {
           <p>
             Connect your wallet or set REACT_APP_RPC_URL and contract addresses.
           </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="marketplace">
+        <div className="loading">
+          <div className="spinner"></div>
+          <p>Loading marketplace with Alchemy...</p>
         </div>
       </div>
     );
@@ -231,6 +286,13 @@ const Marketplace: React.FC = () => {
           </div>
         ) : (
           <>
+            <div className="marketplace-stats">
+              <div className="stat-card">
+                <span className="stat-value">{totalListings}</span>
+                <span className="stat-label">Active Listings</span>
+              </div>
+            </div>
+
             <div className="nft-grid">
               {listedDomains.map((listing) => (
                 <div key={listing.listingId} className="nft-card">

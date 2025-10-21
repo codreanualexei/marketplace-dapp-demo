@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useWallet } from "../contexts/WalletContext";
+import { NETWORK_CONFIG } from "../config/network";
 import "./NetworkChecker.css";
-
-const AMOY_CHAIN_ID = 80002;
 
 const NetworkChecker: React.FC = () => {
   const { chainId, account, switchNetwork, walletType, isNetworkSwitching } =
@@ -12,17 +11,17 @@ const NetworkChecker: React.FC = () => {
   const [showManualHelp, setShowManualHelp] = useState(false);
 
   useEffect(() => {
-    if (account && chainId && chainId !== AMOY_CHAIN_ID) {
+    if (account && chainId && chainId !== NETWORK_CONFIG.chainId) {
       setShowBanner(true);
     } else {
       setShowBanner(false);
     }
   }, [chainId, account]);
 
-  const switchToAmoy = async () => {
+  const switchToTargetNetwork = async () => {
     setIsSwitching(true);
     try {
-      await switchNetwork(AMOY_CHAIN_ID);
+      await switchNetwork(NETWORK_CONFIG.chainId);
     } catch (error: any) {
       console.error("Error switching network:", error);
 
@@ -51,24 +50,24 @@ const NetworkChecker: React.FC = () => {
           <p>
             You're on {chainId ? `Chain ID ${chainId}` : "wrong network"} using{" "}
             {walletType || "wallet"}. This marketplace requires{" "}
-            <strong>Polygon Amoy (Chain ID: 80002)</strong>
+            <strong>{NETWORK_CONFIG.name} (Chain ID: {NETWORK_CONFIG.chainId})</strong>
           </p>
           {walletType === "walletconnect" && (
             <p className="walletconnect-help">
               💡 <strong>Mobile Wallet Tip:</strong> If automatic switching
-              doesn't work, manually switch to Polygon Amoy in your wallet app.
+              doesn't work, manually switch to {NETWORK_CONFIG.name} in your wallet app.
             </p>
           )}
         </div>
         <div className="switch-actions">
           <button
             className="switch-button"
-            onClick={switchToAmoy}
+            onClick={switchToTargetNetwork}
             disabled={isSwitching || isNetworkSwitching}
           >
             {isSwitching || isNetworkSwitching
               ? "Switching..."
-              : "Switch to Amoy"}
+              : `Switch to ${NETWORK_CONFIG.name}`}
           </button>
           {walletType === "walletconnect" && (
             <button

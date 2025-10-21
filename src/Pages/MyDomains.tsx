@@ -9,16 +9,13 @@ const ITEMS_PER_PAGE = 12;
 
 const MyDomains: React.FC = () => {
   const { account } = useWallet();
-  const sdk = useMarketplaceSDK();
+  const { sdk, isLoading: sdkLoading, error: sdkError } = useMarketplaceSDK();
   const [myDomains, setMyDomains] = useState<FormattedToken[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [listingTokenId, setListingTokenId] = useState<number | null>(null);
   const [listPrice, setListPrice] = useState<string>("");
   const [currentPage, setCurrentPage] = useState(1);
-
-  // Don't auto-load to avoid RPC rate limiting
-  // User clicks button to load manually
 
   const loadMyDomains = async () => {
     if (!sdk) return;
@@ -27,7 +24,14 @@ const MyDomains: React.FC = () => {
     setError(null);
 
     try {
+      console.log("Loading domains using Alchemy-enhanced SDK...");
+      const startTime = Date.now();
+      
       const domains = await sdk.getMyDomainsFromCollection();
+      
+      const endTime = Date.now();
+      console.log(`Loaded ${domains.length} domains in ${endTime - startTime}ms`);
+      
       setMyDomains(domains);
     } catch (err: any) {
       console.error("Error loading domains:", err);
@@ -109,12 +113,45 @@ const MyDomains: React.FC = () => {
     );
   }
 
+  if (sdkLoading) {
+    return (
+      <div className="my-domains">
+        <div className="loading">
+          <div className="spinner"></div>
+          <p>Initializing Alchemy SDK...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (sdkError) {
+    return (
+      <div className="my-domains">
+        <div className="error-message">
+          <h3>SDK Error</h3>
+          <p>{sdkError}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!sdk) {
+    return (
+      <div className="my-domains">
+        <div className="error-message">
+          <h3>SDK Not Ready</h3>
+          <p>Please wait for the SDK to initialize</p>
+        </div>
+      </div>
+    );
+  }
+
   if (isLoading && myDomains.length === 0) {
     return (
       <div className="my-domains">
         <div className="loading">
           <div className="spinner"></div>
-          <p>Loading your domains...</p>
+          <p>Loading your domains with Alchemy...</p>
         </div>
       </div>
     );
@@ -155,7 +192,9 @@ const MyDomains: React.FC = () => {
         {myDomains.length === 0 && !isLoading ? (
           <div className="empty-state">
             <h3>Click "Load My Domains" to check ownership</h3>
-            <p>This will scan the collection for NFTs owned by your address</p>
+            <p>
+              This will scan the collection for NFTs owned by your address
+            </p>
           </div>
         ) : myDomains.length > 0 ? (
           <>

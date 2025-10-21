@@ -10,7 +10,7 @@ interface HomeProps {
 }
 
 const Home: React.FC<HomeProps> = ({ onNavigate }) => {
-  const sdk = useMarketplaceSDK();
+  const { sdk } = useMarketplaceSDK();
   const { account } = useWallet();
   const [featuredNFTs, setFeaturedNFTs] = useState<ListedToken[]>([]);
 
@@ -23,8 +23,7 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
     }
 
     try {
-      const listings =
-        await sdk.getAllActiveListedDomainsOnMarketplaceWithTokenData();
+      const listings = await sdk.getAllActiveListingsOptimized();
       // Show first 6 as featured
       setFeaturedNFTs(listings.slice(0, 6));
     } catch (err) {
