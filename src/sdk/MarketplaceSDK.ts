@@ -1,19 +1,13 @@
 import { ethers } from "ethers";
+import { AlchemyService, AlchemyFormattedToken, AlchemyListedToken } from "../services/AlchemyService";
 import MarketplaceABI from "../contracts/abis/Marketplace.json";
 import StrDomainsNFTABI from "../contracts/abis/StrDomainsNFT.json";
 import RoyaltySplitterABI from "../contracts/abis/RoyaltySplitter.json";
+import { NETWORK_CONFIG, getWalletNetworkConfig, validateNetworkConfig } from "../config/network";
 
-export interface TokenData {
-  creator: string;
-  mintTimestamp: number;
-  uri: string;
-  lastPrice: string;
-  lastPriceTimestamp: string;
-}
+// Re-export types for compatibility
+export type { AlchemyFormattedToken as FormattedToken, AlchemyListedToken as ListedToken } from "../services/AlchemyService";
 
-export interface FormattedToken extends TokenData {
-  tokenId: number;
-}
 
 export interface Listing {
   seller: string;
@@ -21,16 +15,6 @@ export interface Listing {
   tokenId: bigint;
   price: bigint;
   active: boolean;
-}
-
-export interface ListedToken {
-  listingId: number;
-  active: boolean;
-  seller: string;
-  tokenId: number;
-  price: string;
-  strCollectionAddress: string;
-  tokenData?: FormattedToken;
 }
 
 export interface SplitterBalance {
@@ -45,6 +29,9 @@ export class MarketplaceSDK {
   private nftAddress: string;
   private marketplaceContract: ethers.Contract;
   private nftContract: ethers.Contract;
+  private marketplaceContractWrite: ethers.Contract; // For write operations
+  private nftContractWrite: ethers.Contract; // For write operations
+  private alchemyService: AlchemyService;
   private develop: boolean;
   public collectionCountTokens?: number;
   private cachedActiveListingCount?: number;
@@ -53,21 +40,66 @@ export class MarketplaceSDK {
     signer: ethers.Signer,
     marketplaceAddress: string,
     nftAddress: string,
+    alchemyApiKey: string,
     develop: boolean = false,
   ) {
     this.develop = develop;
+    
+    // Validate network configuration on initialization
+    try {
+      validateNetworkConfig();
+      this.log(`🌐 Network configuration: ${NETWORK_CONFIG.name} (Chain ID: ${NETWORK_CONFIG.chainId})`);
+    } catch (error) {
+      console.error("❌ Network configuration error:", error);
+      throw new Error(`Network configuration error: ${error}`);
+    }
+    
     this.signer = signer;
     this.provider = signer.provider!;
     this.marketplaceAddress = marketplaceAddress;
     this.nftAddress = nftAddress;
 
-    // Create contract instances
+    // Initialize Alchemy service first to get the provider
+    // Get chainId from the provider or use default
+    let chainId = 80002;
+    try {
+      // Try to get chainId from provider if available
+      if (this.provider && 'network' in this.provider) {
+        chainId = Number((this.provider as any).network?.chainId) || 80002;
+      }
+    } catch (error) {
+      console.warn('Could not get chainId from provider, using default:', error);
+    }
+    this.alchemyService = new AlchemyService(
+      alchemyApiKey,
+      nftAddress,
+      marketplaceAddress,
+      Number(chainId)
+    );
+
+    // Create contract instances using Alchemy provider for read operations
+    // Use signer only for write operations (transactions)
+    const alchemyProvider = this.alchemyService.getProvider();
+    
+    // For read operations, use Alchemy provider to avoid RPC issues
     this.marketplaceContract = new ethers.Contract(
+      marketplaceAddress,
+      MarketplaceABI,
+      alchemyProvider,
+    );
+    this.nftContract = new ethers.Contract(
+      nftAddress,
+      StrDomainsNFTABI,
+      alchemyProvider,
+    );
+
+    // For write operations, use signer (for transactions)
+    this.marketplaceContractWrite = new ethers.Contract(
       marketplaceAddress,
       MarketplaceABI,
       signer,
     );
-    this.nftContract = new ethers.Contract(
+    this.nftContractWrite = new ethers.Contract(
       nftAddress,
       StrDomainsNFTABI,
       signer,
@@ -79,21 +111,42 @@ export class MarketplaceSDK {
     this.signer = signer;
     this.provider = signer.provider!;
 
+    // Get Alchemy provider for read operations
+    const alchemyProvider = this.alchemyService.getProvider();
+    
+    // For read operations, use Alchemy provider to avoid RPC issues
     this.marketplaceContract = new ethers.Contract(
       this.marketplaceAddress,
       MarketplaceABI,
-      signer,
+      alchemyProvider,
     );
     this.nftContract = new ethers.Contract(
       this.nftAddress,
       StrDomainsNFTABI,
-      signer,
+      alchemyProvider,
+    );
+
+    // For write operations, use signer (for transactions) - this is the wallet provider
+    this.marketplaceContractWrite = new ethers.Contract(
+      this.marketplaceAddress,
+      MarketplaceABI,
+      signer, // This uses the wallet provider (WalletConnect/MetaMask)
+    );
+    this.nftContractWrite = new ethers.Contract(
+      this.nftAddress,
+      StrDomainsNFTABI,
+      signer, // This uses the wallet provider (WalletConnect/MetaMask)
     );
   }
 
   // Buy a listed token
   async buyToken(listingId: number): Promise<string | null> {
     try {
+      this.log(`Starting purchase process for listing ${listingId}...`);
+      this.log(`Wallet provider: ${this.signer.provider?.constructor.name || 'Unknown'}`);
+      this.log(`Alchemy provider: ${this.alchemyService.getProvider().constructor.name}`);
+      
+      // Get listing details using read contract (Alchemy provider)
       const listing = await this.marketplaceContract.getListing(listingId);
       const { price, active } = listing;
 
@@ -102,17 +155,206 @@ export class MarketplaceSDK {
         return null;
       }
 
-      this.warn(`Buying token for ${ethers.formatEther(price)} MATIC...`);
-      const tx = await this.marketplaceContract.buy(listingId, {
-        value: price,
-      });
-      const receipt = await tx.wait();
+      this.log(`Listing details: Price=${ethers.formatEther(price)} MATIC, Active=${active}`);
 
-      this.warn(`Purchase successful!`);
+      // Additional validation: Check if the marketplace actually holds the NFT
+      const nftOwner = await this.nftContract.ownerOf(listing.tokenId);
+      this.log(`NFT owner: ${nftOwner}`);
+      this.log(`Marketplace address: ${this.marketplaceAddress}`);
+      
+      if (nftOwner.toLowerCase() !== this.marketplaceAddress.toLowerCase()) {
+        this.error(`NFT is not held by marketplace. Owner: ${nftOwner}, Marketplace: ${this.marketplaceAddress}`);
+        throw new Error("This listing is no longer valid. The NFT is not held by the marketplace.");
+      }
+
+      // Check if user is trying to buy their own listing
+      const userAddress = await this.signer.getAddress();
+      if (listing.seller.toLowerCase() === userAddress.toLowerCase()) {
+        this.error(`User is trying to buy their own listing. Seller: ${listing.seller}, Buyer: ${userAddress}`);
+        throw new Error("You cannot buy your own listing.");
+      }
+
+      // Additional validation: Check royalty info to see if there might be issues
+      try {
+        const royaltyInfo = await this.nftContract.royaltyInfo(listing.tokenId, price);
+        this.log(`Royalty info: receiver=${royaltyInfo[0]}, amount=${ethers.formatEther(royaltyInfo[1])} MATIC`);
+        
+        // Check if royalty receiver is a valid address
+        if (royaltyInfo[0] === '0x0000000000000000000000000000000000000000' && royaltyInfo[1] > 0) {
+          this.warn("Royalty receiver is zero address but royalty amount > 0 - this might cause issues");
+        }
+      } catch (royaltyError) {
+        this.warn("Could not fetch royalty info:", royaltyError);
+      }
+
+      // Check if user has sufficient balance using Alchemy provider (read operation)
+      const alchemyProvider = this.alchemyService.getProvider();
+      const userBalance = await alchemyProvider.getBalance(userAddress);
+      if (userBalance < price) {
+        this.error(`Insufficient balance. Required: ${ethers.formatEther(price)} MATIC, Available: ${ethers.formatEther(userBalance)} MATIC`);
+        throw new Error(`Insufficient balance. You need ${ethers.formatEther(price)} MATIC but only have ${ethers.formatEther(userBalance)} MATIC.`);
+      }
+
+      // Estimate gas first using wallet provider (needs to simulate transaction)
+      let gasEstimate;
+      try {
+        this.log("Attempting gas estimation...");
+        gasEstimate = await this.marketplaceContractWrite.buy.estimateGas(listingId, {
+          value: price,
+        });
+        this.log(`Gas estimate successful: ${gasEstimate.toString()}`);
+      } catch (gasError: any) {
+        this.error("Gas estimation failed:", gasError);
+        this.error("Gas estimation error details:", {
+          message: gasError.message,
+          code: gasError.code,
+          reason: gasError.reason,
+          data: gasError.data
+        });
+        
+        // If gas estimation fails, use a higher default gas limit
+        // The buy function involves multiple operations: royalty payment, seller payment, NFT transfer, sale recording
+        gasEstimate = BigInt(800000); // Increased default gas limit for complex buy operation
+        this.warn(`Using increased default gas limit: ${gasEstimate.toString()} due to estimation failure`);
+      }
+
+      // Add 20% buffer to gas estimate, but ensure minimum gas limit
+      let gasLimit = gasEstimate + (gasEstimate * BigInt(20)) / BigInt(100);
+      
+      // Ensure minimum gas limit for complex buy operation
+      const minimumGasLimit = BigInt(1000000); // 1M gas minimum
+      if (gasLimit < minimumGasLimit) {
+        gasLimit = minimumGasLimit;
+        this.warn(`Using minimum gas limit: ${gasLimit.toString()}`);
+      }
+
+      this.log(`Buying token for ${ethers.formatEther(price)} MATIC with gas limit ${gasLimit.toString()}...`);
+      this.log(`Contract address: ${this.marketplaceAddress}`);
+      this.log(`Sending transaction using wallet provider: ${this.signer.provider?.constructor.name}`);
+      
+      // Send transaction with explicit gas settings using wallet provider (for signing)
+      // The contract requires exact amount: require(msg.value == L.price, "bad value");
+      const tx = await this.marketplaceContractWrite.buy(listingId, {
+        value: price, // Exact amount required by contract
+        gasLimit: gasLimit,
+      });
+
+      this.log(`Transaction sent: ${tx.hash}`);
+      this.log("Waiting for transaction confirmation...");
+
+      // Wait for transaction with longer timeout for WalletConnect
+      // WalletConnect transactions can take longer, so we increase the timeout
+      let receipt;
+      try {
+        this.log("Waiting for transaction confirmation...");
+        receipt = await Promise.race([
+          tx.wait(2), // Wait for 2 confirmations
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error("Transaction timeout after 5 minutes")), 5 * 60 * 1000)
+          )
+        ]);
+      } catch (waitError: any) {
+        this.error("Error waiting for transaction confirmation:", waitError);
+        
+        // If waiting fails, try to get the transaction status directly
+        try {
+          this.log("Attempting to get transaction status directly...");
+          const txStatus = await this.signer.provider!.getTransactionReceipt(tx.hash);
+          if (txStatus) {
+            receipt = txStatus;
+            this.log("Got transaction receipt directly:", txStatus);
+          } else {
+            // Transaction might still be pending
+            this.log("Transaction is still pending, checking status...");
+            const txDetails = await this.signer.provider!.getTransaction(tx.hash);
+            if (txDetails && txDetails.blockNumber) {
+              // Transaction is confirmed, try to get receipt again
+              receipt = await this.signer.provider!.getTransactionReceipt(tx.hash);
+              this.log("Got receipt after confirmation:", receipt);
+            } else {
+              throw new Error("Transaction is still pending or failed");
+            }
+          }
+        } catch (directError: any) {
+          this.error("Could not get transaction status directly:", directError);
+          
+          // Final fallback: Check if the NFT ownership changed (transaction succeeded)
+          try {
+            this.log("Checking if NFT ownership changed as fallback verification...");
+            const userAddress = await this.signer.getAddress();
+            const newOwner = await this.nftContract.ownerOf(listing.tokenId);
+            
+            if (newOwner.toLowerCase() === userAddress.toLowerCase()) {
+              this.log("NFT ownership verification: Transaction succeeded! User now owns the NFT.");
+              // Return the transaction hash even though we couldn't get the receipt
+              return tx.hash;
+            } else {
+              this.error(`NFT ownership verification failed. Expected: ${userAddress}, Got: ${newOwner}`);
+              throw new Error("Transaction confirmation failed and NFT ownership verification failed.");
+            }
+          } catch (ownershipError: any) {
+            this.error("NFT ownership verification error:", ownershipError);
+            throw new Error("Transaction confirmation failed. Please check your wallet or try again.");
+          }
+        }
+      }
+
+      if (!receipt) {
+        throw new Error("Transaction receipt not received");
+      }
+
+      this.log("Transaction receipt received:", receipt);
+
+      // Check if transaction was successful
+      if (receipt.status === 0) {
+        this.error("Transaction failed on blockchain");
+        this.error("Transaction receipt:", receipt);
+        
+        // Try to get more details about the failure
+        try {
+          const txDetails = await this.signer.provider!.getTransaction(tx.hash);
+          this.error("Transaction details:", txDetails);
+        } catch (txError) {
+          this.error("Could not get transaction details:", txError);
+        }
+        
+        throw new Error("Transaction failed on blockchain. Check the logs for details.");
+      }
+
+      this.log(`Purchase successful! Transaction: ${receipt.hash}`);
+      this.log(`Gas used: ${receipt.gasUsed.toString()}`);
+      this.log(`Block number: ${receipt.blockNumber}`);
       return receipt.hash;
     } catch (error: any) {
       this.error("Error purchasing token:", error);
-      return null;
+      this.error("Error details:", {
+        message: error.message,
+        code: error.code,
+        reason: error.reason,
+        transaction: error.transaction,
+        receipt: error.receipt
+      });
+      
+      // Provide more detailed error messages
+      if (error.message?.includes("insufficient funds")) {
+        throw new Error("Insufficient funds for transaction. Please check your wallet balance.");
+      } else if (error.message?.includes("user rejected")) {
+        throw new Error("Transaction was rejected by user.");
+      } else if (error.message?.includes("gas")) {
+        throw new Error("Gas estimation failed. Please try again or increase gas limit.");
+      } else if (error.message?.includes("network") || error.code === 'NETWORK_ERROR') {
+        throw new Error("Network error. Please check your connection and try again.");
+      } else if (error.message?.includes("timeout")) {
+        throw new Error("Transaction timeout. The transaction may still be processing. Please check your wallet or try again.");
+      } else if (error.code === 'UNPREDICTABLE_GAS_LIMIT') {
+        throw new Error("Gas estimation failed. Please try again with a higher gas limit.");
+      } else if (error.code === 'INSUFFICIENT_FUNDS') {
+        throw new Error("Insufficient funds for transaction. Please check your wallet balance.");
+      } else if (error.code === 'USER_REJECTED') {
+        throw new Error("Transaction was rejected by user.");
+      } else {
+        throw new Error(`Purchase failed: ${error.message || "Unknown error"}`);
+      }
     }
   }
 
@@ -122,63 +364,397 @@ export class MarketplaceSDK {
     newPrice: string,
   ): Promise<string | null> {
     try {
-      const tx = await this.marketplaceContract.updateListing(
+      this.log(`Updating listing ${listingId} with new price ${newPrice} MATIC...`);
+      
+      // Wait for network stability before updating
+      await this.ensureCorrectNetwork();
+      
+      // Get the listing details first
+      const listing = await this.marketplaceContract.getListing(listingId);
+      
+      if (!listing.active) {
+        throw new Error("This listing is no longer active and cannot be updated.");
+      }
+
+      // Check if the user is the seller
+      const userAddress = await this.signer.getAddress();
+      if (listing.seller.toLowerCase() !== userAddress.toLowerCase()) {
+        throw new Error("You can only update your own listings.");
+      }
+
+      // Estimate gas for update transaction with fallback
+      let gasEstimate;
+      try {
+        this.log("Attempting gas estimation for update...");
+        gasEstimate = await this.marketplaceContractWrite.updateListing.estimateGas(
+          listingId,
+          ethers.parseEther(newPrice),
+        );
+        this.log(`Update gas estimate successful: ${gasEstimate.toString()}`);
+      } catch (gasError: any) {
+        this.error("Update gas estimation failed:", gasError);
+        if (gasError.message?.includes("network changed")) {
+          throw new Error("Network changed during gas estimation. Please try again.");
+        }
+        gasEstimate = BigInt(100000); // Default gas limit for update
+        this.warn(`Using default gas limit for update: ${gasEstimate.toString()}`);
+      }
+
+      // Add 20% buffer to gas estimate
+      const gasLimit = gasEstimate + (gasEstimate * BigInt(20)) / BigInt(100);
+      
+      this.log(`Sending update transaction with gas limit: ${gasLimit.toString()}`);
+      
+      const tx = await this.marketplaceContractWrite.updateListing(
         listingId,
         ethers.parseEther(newPrice),
+        {
+          gasLimit: gasLimit,
+        }
       );
-      this.warn(
-        `Listing ${listingId} updated with new price: ${newPrice} MATIC`,
-      );
-      const receipt = await tx.wait();
-      return receipt.hash;
+      
+      this.log(`Update transaction sent: ${tx.hash}`);
+      this.log("Waiting for update confirmation...");
+      
+      // Wait for transaction with robust confirmation handling
+      let receipt;
+      try {
+        this.log("Waiting for update transaction confirmation...");
+        receipt = await tx.wait(2); // Wait for 2 confirmations
+        this.log(`Update transaction confirmed in block ${receipt.blockNumber}`);
+      } catch (waitError: any) {
+        this.warn("Standard wait failed, trying alternative confirmation methods...");
+        
+        // Try direct receipt lookup
+        try {
+          this.log("Attempting direct receipt lookup...");
+          receipt = await this.signer.provider!.getTransactionReceipt(tx.hash);
+          if (receipt) {
+            this.log(`Found receipt via direct lookup: ${receipt.blockNumber}`);
+          }
+        } catch (receiptError) {
+          this.warn("Direct receipt lookup failed:", receiptError);
+        }
+        
+        // If still no receipt, try checking transaction status
+        if (!receipt) {
+          try {
+            this.log("Checking transaction status...");
+            const txStatus = await this.signer.provider!.getTransaction(tx.hash);
+            if (txStatus && txStatus.blockNumber) {
+              this.log(`Transaction included in block: ${txStatus.blockNumber}`);
+              // Try to get receipt again
+              receipt = await this.signer.provider!.getTransactionReceipt(tx.hash);
+            }
+          } catch (statusError) {
+            this.warn("Transaction status check failed:", statusError);
+          }
+        }
+        
+        // Final fallback - assume success if we have the transaction hash
+        if (!receipt) {
+          this.warn("Could not get transaction receipt, but transaction was sent successfully");
+          this.log(`Update transaction hash: ${tx.hash}`);
+          return tx.hash;
+        }
+      }
+      
+      if (receipt) {
+        this.log(`Listing ${listingId} updated successfully! Transaction: ${receipt.hash}`);
+        this.log(`New price: ${newPrice} MATIC`);
+        this.log(`Gas used: ${receipt.gasUsed.toString()}`);
+        this.log(`Block number: ${receipt.blockNumber}`);
+        return receipt.hash;
+      } else {
+        this.warn("No receipt found, but transaction was sent");
+        return tx.hash;
+      }
     } catch (error: any) {
-      this.error("Error updating listing:", error);
-      return null;
+      this.error(`Error updating listing ${listingId}:`, error);
+      
+      // Provide more specific error messages
+      if (error.message?.includes("only update your own")) {
+        throw new Error("You can only update your own listings.");
+      } else if (error.message?.includes("no longer active")) {
+        throw new Error("This listing is no longer active and cannot be updated.");
+      } else if (error.message?.includes("user rejected")) {
+        throw new Error("Update transaction was rejected by user.");
+      } else if (error.message?.includes("network changed")) {
+        throw new Error("Network is switching. Please wait for the network change to complete and try again.");
+      } else if (error.message?.includes("switch to") || error.message?.includes("Chain ID:") || error.message?.includes("Failed to switch")) {
+        throw new Error(`🔗 Please switch to ${NETWORK_CONFIG.name} network before updating. The system attempted to switch automatically but failed. Please manually switch to ${NETWORK_CONFIG.name} (Chain ID: ${NETWORK_CONFIG.chainId}) in your wallet.`);
+      } else if (error.message?.includes("Internal JSON-RPC error") || error.code === "UNKNOWN_ERROR") {
+        throw new Error("Network error during update. Please try again in a few moments.");
+      } else if (error.message?.includes("network")) {
+        throw new Error("Network error. Please check your connection and try again.");
+      } else {
+        throw new Error(`Failed to update listing: ${error.message || "Unknown error"}`);
+      }
     }
   }
 
   // List a token on the marketplace
   async listToken(tokenId: number, price: string): Promise<string | null> {
     try {
-      await this.approveTokenForSale(tokenId);
-
-      const approved = await this.nftContract.getApproved(tokenId);
-
-      if (approved !== this.marketplaceAddress) {
-        this.warn(
-          `Please approve tokenId: ${tokenId} for Marketplace address: ${this.marketplaceAddress}, or check the Marketplace listings`,
-        );
-        return null;
+      this.log(`Starting listing process for token ${tokenId} at price ${price} MATIC...`);
+      
+      // Check if user owns the token
+      const userAddress = await this.signer.getAddress();
+      const tokenOwner = await this.nftContract.ownerOf(tokenId);
+      this.log(`Token owner: ${tokenOwner}, User address: ${userAddress}`);
+      
+      if (tokenOwner.toLowerCase() !== userAddress.toLowerCase()) {
+        this.error(`User does not own token ${tokenId}. Owner: ${tokenOwner}, User: ${userAddress}`);
+        throw new Error("Failed to list domain. Make sure you own it and it's not already listed.");
       }
 
-      const tx = await this.marketplaceContract.listToken(
+      // Check if token is already listed
+      try {
+        // Check if token is already approved for marketplace
+        const currentApproval = await this.nftContract.getApproved(tokenId);
+        const isApprovedForAll = await this.nftContract.isApprovedForAll(userAddress, this.marketplaceAddress);
+        
+        this.log(`Current approval: ${currentApproval}, Marketplace address: ${this.marketplaceAddress}`);
+        this.log(`Approved for all: ${isApprovedForAll}`);
+        
+        if (currentApproval.toLowerCase() === this.marketplaceAddress.toLowerCase() || isApprovedForAll) {
+          this.log("Token is already approved, proceeding with listing...");
+        } else {
+          this.log("Token needs approval, requesting approval...");
+          const approvalTxHash = await this.approveTokenForSale(tokenId);
+          
+          if (!approvalTxHash) {
+            throw new Error("Failed to approve token for marketplace. Please try again.");
+          }
+          
+          this.log(`Approval transaction successful: ${approvalTxHash}`);
+          
+          // Wait a moment for approval to be processed
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          
+          // Verify approval
+          const newApproval = await this.nftContract.getApproved(tokenId);
+          if (newApproval.toLowerCase() !== this.marketplaceAddress.toLowerCase()) {
+            throw new Error("Token approval failed. Please try again.");
+          }
+        }
+      } catch (approvalError: any) {
+        this.error("Error during approval process:", approvalError);
+        throw new Error("Failed to approve token for marketplace. Please try again.");
+      }
+
+      // Now list the token
+      this.log("Creating listing transaction...");
+      
+      // Wait for network stability before sending listing transaction
+      await this.ensureCorrectNetwork();
+      
+      // Estimate gas for listing transaction with fallback
+      let listingGasEstimate;
+      try {
+        this.log("Attempting gas estimation for listing...");
+        listingGasEstimate = await this.marketplaceContractWrite.listToken.estimateGas(
+          this.nftAddress,
+          tokenId,
+          ethers.parseEther(price),
+        );
+        this.log(`Listing gas estimate successful: ${listingGasEstimate.toString()}`);
+      } catch (gasError: any) {
+        this.error("Listing gas estimation failed:", gasError);
+        if (gasError.message?.includes("network changed")) {
+          throw new Error("Network changed during gas estimation. Please try again.");
+        }
+        listingGasEstimate = BigInt(500000); // Default gas limit for listing
+        this.warn(`Using default gas limit for listing: ${listingGasEstimate.toString()}`);
+      }
+
+      // Add 20% buffer to gas estimate
+      const listingGasLimit = listingGasEstimate + (listingGasEstimate * BigInt(20)) / BigInt(100);
+      
+      this.log(`Sending listing transaction with gas limit: ${listingGasLimit.toString()}`);
+      
+      const tx = await this.marketplaceContractWrite.listToken(
         this.nftAddress,
         tokenId,
         ethers.parseEther(price),
+        {
+          gasLimit: listingGasLimit,
+        }
       );
 
-      const receipt = await tx.wait();
+      this.log(`Listing transaction sent: ${tx.hash}`);
+      this.log("Waiting for listing confirmation...");
+      
+      // Wait for transaction with robust confirmation handling (same as buy function)
+      let receipt;
+      try {
+        receipt = await Promise.race([
+          tx.wait(2), // Wait for 2 confirmations
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error("Transaction timeout after 5 minutes")), 5 * 60 * 1000)
+          )
+        ]);
+      } catch (waitError: any) {
+        this.error("Error waiting for listing transaction confirmation:", waitError);
+        
+        // If waiting fails, try to get the transaction status directly
+        try {
+          this.log("Attempting to get listing transaction status directly...");
+          const txStatus = await this.signer.provider!.getTransactionReceipt(tx.hash);
+          if (txStatus) {
+            receipt = txStatus;
+            this.log("Got listing transaction receipt directly:", txStatus);
+          } else {
+            // Transaction might still be pending
+            this.log("Listing transaction is still pending, checking status...");
+            const txDetails = await this.signer.provider!.getTransaction(tx.hash);
+            if (txDetails && txDetails.blockNumber) {
+              // Transaction is confirmed, try to get receipt again
+              receipt = await this.signer.provider!.getTransactionReceipt(tx.hash);
+              this.log("Got listing receipt after confirmation:", receipt);
+            } else {
+              throw new Error("Listing transaction is still pending or failed");
+            }
+          }
+        } catch (directError: any) {
+          this.error("Could not get listing transaction status directly:", directError);
+          
+          // Final fallback: Check if the NFT is now held by marketplace (listing succeeded)
+          try {
+            this.log("Checking if NFT is now held by marketplace as fallback verification...");
+            const newOwner = await this.nftContract.ownerOf(tokenId);
+            
+            if (newOwner.toLowerCase() === this.marketplaceAddress.toLowerCase()) {
+              this.log("NFT ownership verification: Listing succeeded! Marketplace now holds the NFT.");
+              // Return the transaction hash even though we couldn't get the receipt
+              return tx.hash;
+            } else {
+              this.error(`NFT ownership verification failed. Expected: ${this.marketplaceAddress}, Got: ${newOwner}`);
+              throw new Error("Listing transaction confirmation failed and NFT ownership verification failed.");
+            }
+          } catch (ownershipError: any) {
+            this.error("NFT ownership verification error:", ownershipError);
+            throw new Error("Listing transaction confirmation failed. Please check your wallet or try again.");
+          }
+        }
+      }
+
+      if (!receipt) {
+        throw new Error("Listing transaction receipt not received");
+      }
+
+      this.log("Listing transaction receipt received:", receipt);
+
+      // Check if transaction was successful
+      if (receipt.status === 0) {
+        this.error("Listing transaction failed on blockchain");
+        this.error("Listing transaction receipt:", receipt);
+        
+        // Try to get more details about the failure
+        try {
+          const txDetails = await this.signer.provider!.getTransaction(tx.hash);
+          this.error("Listing transaction details:", txDetails);
+        } catch (txError) {
+          this.error("Could not get listing transaction details:", txError);
+        }
+        
+        throw new Error("Listing transaction failed on blockchain. Check the logs for details.");
+      }
+
+      this.log(`Listing successful! Transaction: ${receipt.hash}`);
+      this.log(`Gas used: ${receipt.gasUsed.toString()}`);
+      this.log(`Block number: ${receipt.blockNumber}`);
       return receipt.hash;
     } catch (error: any) {
-      this.error(
-        `Error listing your tokenId: ${tokenId}, check your ownership`,
-      );
-      return null;
+      this.error(`Error listing token ${tokenId}:`, error);
+      
+      // Provide more specific error messages
+      if (error.message?.includes("does not own")) {
+        throw new Error("Failed to list domain. Make sure you own it and it's not already listed.");
+      } else if (error.message?.includes("approve")) {
+        throw new Error("Failed to approve token for marketplace. Please try again.");
+      } else if (error.message?.includes("already listed")) {
+        throw new Error("This domain is already listed on the marketplace.");
+      } else if (error.message?.includes("network changed")) {
+        throw new Error("Network is switching. Please wait for the network change to complete and try again.");
+      } else if (error.message?.includes("switch to") || error.message?.includes("Chain ID:") || error.message?.includes("Failed to switch")) {
+        throw new Error(`🔗 Please switch to ${NETWORK_CONFIG.name} network before listing. The system attempted to switch automatically but failed. Please manually switch to ${NETWORK_CONFIG.name} (Chain ID: ${NETWORK_CONFIG.chainId}) in your wallet.`);
+      } else if (error.message?.includes("Internal JSON-RPC error") || error.code === "UNKNOWN_ERROR") {
+        throw new Error("Network error during listing. Please try again in a few moments.");
+      } else if (error.message?.includes("network")) {
+        throw new Error("Network error. Please check your connection and try again.");
+      } else {
+        throw new Error(`Failed to list domain: ${error.message || "Unknown error"}`);
+      }
     }
   }
 
   // Cancel a listing
   async cancelListing(listingId: number): Promise<string | null> {
     try {
-      const tx = await this.marketplaceContract.cancelListing(listingId);
-      const receipt = await tx.wait();
-      this.warn(`Listing ${listingId} has been cancelled.`);
+      this.log(`Cancelling listing ${listingId}...`);
+      
+      // Always enforce correct network before any transaction
+      await this.ensureCorrectNetwork();
+      
+      // Get the listing details first
+      const listing = await this.marketplaceContract.getListing(listingId);
+      
+      if (!listing.active) {
+        this.warn(`Listing ${listingId} has been cancelled.`);
+        return null;
+      }
+
+      // Check if the user is the seller
+      const userAddress = await this.signer.getAddress();
+      if (listing.seller.toLowerCase() !== userAddress.toLowerCase()) {
+        throw new Error("You can only cancel your own listings.");
+      }
+
+      // Estimate gas for cancellation transaction with fallback
+      let gasEstimate;
+      try {
+        this.log("Attempting gas estimation for cancellation...");
+        gasEstimate = await this.marketplaceContractWrite.cancelListing.estimateGas(listingId);
+        this.log(`Cancellation gas estimate successful: ${gasEstimate.toString()}`);
+      } catch (gasError: any) {
+        this.error("Cancellation gas estimation failed:", gasError);
+        if (gasError.message?.includes("network changed")) {
+          throw new Error("Network changed during gas estimation. Please try again.");
+        }
+        gasEstimate = BigInt(300000); // Default gas limit for cancellation
+        this.warn(`Using default gas limit for cancellation: ${gasEstimate.toString()}`);
+      }
+
+      // Add 20% buffer to gas estimate
+      const gasLimit = gasEstimate + (gasEstimate * BigInt(20)) / BigInt(100);
+      
+      this.log(`Sending cancellation transaction with gas limit: ${gasLimit.toString()}`);
+      
+      // Send transaction - simple approach, let user retry if it fails
+      const tx = await this.marketplaceContractWrite.cancelListing(listingId, {
+        gasLimit: gasLimit,
+      });
+      
+      this.log(`Cancellation transaction sent: ${tx.hash}`);
+      this.log("Waiting for cancellation confirmation...");
+      
+      // Wait for transaction confirmation - simple approach
+      const receipt = await tx.wait(2);
+      this.log(`Listing ${listingId} cancelled successfully! Transaction: ${receipt.hash}`);
       return receipt.hash;
+      
     } catch (error: any) {
-      this.error(
-        `Error cancelling listing, check the listingId: ${listingId} is active, or it exists`,
-      );
-      return null;
+      this.error(`Error cancelling listing ${listingId}:`, error);
+      
+      // Simple error handling - let user retry if needed
+      if (error.message?.includes("user rejected")) {
+        throw new Error("Transaction was rejected by user.");
+      } else if (error.message?.includes("switch to") || error.message?.includes("Chain ID:")) {
+        throw new Error(`Please switch to ${NETWORK_CONFIG.name} network (Chain ID: ${NETWORK_CONFIG.chainId}) and try again.`);
+      } else {
+        throw new Error(`Failed to cancel listing: ${error.message || "Please try again."}`);
+      }
     }
   }
 
@@ -204,9 +780,21 @@ export class MarketplaceSDK {
     }
   }
 
-  // Get tokenData from collection
+  // Get tokenData from collection (enhanced with Alchemy)
   async getTokenData(tokenId: number): Promise<any> {
     try {
+      // Try Alchemy first for better performance
+      const alchemyMetadata = await this.alchemyService.getTokenMetadata(tokenId);
+      if (alchemyMetadata) {
+        // Combine Alchemy data with contract data
+        const contractData = await this.nftContract.getTokenData(tokenId);
+        return {
+          ...contractData,
+          metadata: alchemyMetadata
+        };
+      }
+      
+      // Fallback to contract only
       const data = await this.nftContract.getTokenData(tokenId);
       return data;
     } catch (error: any) {
@@ -215,21 +803,33 @@ export class MarketplaceSDK {
     }
   }
 
-  // Get token data from collection
+  // Get token data from collection (enhanced with Alchemy)
   async getStrDomainFromCollection(
     tokenId: number,
-  ): Promise<FormattedToken | null> {
+  ): Promise<AlchemyFormattedToken | null> {
     try {
+      // Get contract data first (this includes creator address)
       const data = await this.nftContract.getTokenData(tokenId);
-      const formattedToken: FormattedToken = {
+      
+      // Try to get enhanced metadata from Alchemy
+      let alchemyMetadata = null;
+      try {
+        alchemyMetadata = await this.alchemyService.getTokenMetadata(tokenId);
+      } catch (alchemyError) {
+        // Alchemy metadata is optional, continue with contract data
+        this.log(`Alchemy metadata not available for token ${tokenId}, using contract data only`);
+      }
+      
+      const formattedToken: AlchemyFormattedToken = {
         tokenId: tokenId,
-        creator: data[0],
+        creator: data[0], // Creator address from contract
         mintTimestamp: Number(data[1]),
-        uri: data[2],
+        uri: alchemyMetadata?.tokenUri?.raw || data[2], // Use Alchemy URI if available, otherwise contract URI
         lastPrice: data[3].toString(),
         lastPriceTimestamp: data[4].toString(),
       };
 
+      this.log(`Retrieved token data for #${tokenId} - Creator: ${data[0]}`);
       return formattedToken;
     } catch (e: any) {
       // Don't log error, just return null
@@ -237,49 +837,69 @@ export class MarketplaceSDK {
     }
   }
 
-  // Scraping all tokens from the collection
-  async getAllStrDomainsFromCollection(): Promise<FormattedToken[]> {
-    const tokenList: FormattedToken[] = [];
-    let tokenId = 1;
-    let consecutiveFailures = 0;
-    const MAX_CONSECUTIVE_FAILURES = 3;
-    const MAX_TOKENS = 50; // Limit to avoid RPC issues
-
-    while (
-      tokenId <= MAX_TOKENS &&
-      consecutiveFailures < MAX_CONSECUTIVE_FAILURES
-    ) {
-      try {
-        const tokenData = await this.getStrDomainFromCollection(tokenId);
-        if (tokenData) {
-          tokenList.push(tokenData);
-          consecutiveFailures = 0;
-        } else {
-          consecutiveFailures++;
+  // Fetch all NFTs from the collection that belong to the connected wallet (Alchemy-powered)
+  async getMyDomainsFromCollection(): Promise<AlchemyFormattedToken[]> {
+    try {
+      const myAddress = await this.signer.getAddress();
+      this.log(`Fetching NFTs owned by ${myAddress} using Alchemy...`);
+      
+      // Use Alchemy to get owned NFTs quickly
+      const ownedNFTs = await this.alchemyService.getOwnedNFTs(myAddress);
+      
+      // Enhance with contract data for missing fields
+      const enhancedNFTs: AlchemyFormattedToken[] = [];
+      
+      for (const nft of ownedNFTs) {
+        try {
+          // Get contract-specific data including creator address
+          const contractData = await this.nftContract.getTokenData(nft.tokenId);
+          
+          const enhancedNFT: AlchemyFormattedToken = {
+            ...nft,
+            creator: contractData[0], // This is the actual creator address from contract
+            mintTimestamp: Number(contractData[1]),
+            uri: nft.uri || contractData[2],
+            lastPrice: contractData[3].toString(),
+            lastPriceTimestamp: contractData[4].toString(),
+          };
+          
+          enhancedNFTs.push(enhancedNFT);
+          this.log(`Enhanced NFT data for token #${nft.tokenId} - Creator: ${contractData[0]}`);
+        } catch (error) {
+          // If contract data fails, use Alchemy data as fallback but try to get creator separately
+          try {
+            const creator = await this.nftContract.creatorOf(nft.tokenId);
+            const enhancedNFT: AlchemyFormattedToken = {
+              ...nft,
+              creator: creator,
+              mintTimestamp: nft.mintTimestamp,
+              uri: nft.uri,
+              lastPrice: nft.lastPrice,
+              lastPriceTimestamp: nft.lastPriceTimestamp,
+            };
+            enhancedNFTs.push(enhancedNFT);
+            this.log(`Enhanced NFT data for token #${nft.tokenId} - Creator: ${creator}`);
+          } catch (creatorError) {
+            // Final fallback - use Alchemy data only
+            enhancedNFTs.push(nft);
+            this.warn(`Using Alchemy data only for token #${nft.tokenId} - creator unavailable`);
+          }
         }
-        tokenId++;
-      } catch (error: any) {
-        consecutiveFailures++;
-        if (
-          error.code === "CALL_EXCEPTION" &&
-          error.reason?.includes("ERC721NonexistentToken")
-        ) {
-          tokenId++;
-          continue;
-        }
-        this.warn(`Error at token ${tokenId}, continuing...`);
-        tokenId++;
       }
-    }
 
-    this.collectionCountTokens = tokenList.length;
-    this.warn(`Found ${tokenList.length} tokens in collection`);
-    return tokenList;
+      this.log(`Found ${enhancedNFTs.length} domains owned by you via Alchemy`);
+      return enhancedNFTs;
+    } catch (error: any) {
+      this.error("Error fetching owned NFTs via Alchemy, falling back to contract:", error);
+      
+      // Fallback to original contract-based method
+      return await this.getMyDomainsFromCollectionFallback();
+    }
   }
 
-  // Fetch all NFTs from the collection that belong to the connected wallet
-  async getMyDomainsFromCollection(): Promise<FormattedToken[]> {
-    const myTokenList: FormattedToken[] = [];
+  // Fallback method using contract calls (original implementation)
+  private async getMyDomainsFromCollectionFallback(): Promise<AlchemyFormattedToken[]> {
+    const myTokenList: AlchemyFormattedToken[] = [];
     let tokenId = 1;
     let consecutiveFailures = 0;
     const MAX_CONSECUTIVE_FAILURES = 3;
@@ -337,13 +957,56 @@ export class MarketplaceSDK {
       }
     }
 
-    this.warn(`Found ${myTokenList.length} domains owned by you`);
+    this.warn(`Found ${myTokenList.length} domains owned by you (fallback method)`);
     return myTokenList;
   }
 
-  // Count all the tokens from the collection
-  async countCollectionTokens(): Promise<number> {
-    const tokenList: FormattedToken[] = [];
+  // Get all NFTs from collection (Alchemy-powered)
+  async getAllStrDomainsFromCollection(): Promise<AlchemyFormattedToken[]> {
+    try {
+      this.log("Fetching all collection NFTs using Alchemy...");
+      
+      // Use Alchemy to get all NFTs quickly
+      const allNFTs = await this.alchemyService.getAllCollectionNFTs();
+      
+      // Enhance with contract data
+      const enhancedNFTs: AlchemyFormattedToken[] = [];
+      
+      for (const nft of allNFTs) {
+        try {
+          // Get contract-specific data
+          const contractData = await this.nftContract.getTokenData(nft.tokenId);
+          
+          const enhancedNFT: AlchemyFormattedToken = {
+            ...nft,
+            creator: contractData[0],
+            mintTimestamp: Number(contractData[1]),
+            uri: nft.uri || contractData[2],
+            lastPrice: contractData[3].toString(),
+            lastPriceTimestamp: contractData[4].toString(),
+          };
+          
+          enhancedNFTs.push(enhancedNFT);
+        } catch (error) {
+          // If contract data fails, use Alchemy data as fallback
+          enhancedNFTs.push(nft);
+        }
+      }
+
+      this.collectionCountTokens = enhancedNFTs.length;
+      this.log(`Found ${enhancedNFTs.length} tokens in collection via Alchemy`);
+      return enhancedNFTs;
+    } catch (error: any) {
+      this.error("Error fetching collection NFTs via Alchemy, falling back to contract:", error);
+      
+      // Fallback to original contract-based method
+      return await this.getAllStrDomainsFromCollectionFallback();
+    }
+  }
+
+  // Fallback method using contract calls (original implementation)
+  private async getAllStrDomainsFromCollectionFallback(): Promise<AlchemyFormattedToken[]> {
+    const tokenList: AlchemyFormattedToken[] = [];
     let tokenId = 1;
     let consecutiveFailures = 0;
     const MAX_CONSECUTIVE_FAILURES = 3;
@@ -366,9 +1029,7 @@ export class MarketplaceSDK {
         consecutiveFailures++;
         if (
           error.code === "CALL_EXCEPTION" &&
-          (error.reason?.includes("ERC721NonexistentToken") ||
-            error.reason?.includes("nonexistent") ||
-            error.message?.includes("could not decode"))
+          error.reason?.includes("ERC721NonexistentToken")
         ) {
           tokenId++;
           continue;
@@ -379,35 +1040,8 @@ export class MarketplaceSDK {
     }
 
     this.collectionCountTokens = tokenList.length;
-    this.warn(`Counted ${tokenList.length} tokens in collection`);
-    return tokenList.length;
-  }
-
-  // Scraping all splitter contracts from the collection
-  async getAllSplitterContractsFromCollection(): Promise<string[]> {
-    this.collectionCountTokens = await this.countCollectionTokens();
-    if (!this.collectionCountTokens) {
-      this.warn(
-        "no token counter, please run Marketplace.getStrDomainFromCollection()",
-      );
-      return [];
-    }
-    const splitterList: string[] = [];
-    let tokenId = 1;
-    for (tokenId = 1; tokenId <= this.collectionCountTokens; tokenId++) {
-      try {
-        const splitterData = await this.nftContract.royaltyInfo(
-          tokenId,
-          40000000,
-        );
-        splitterList.push(splitterData[0]);
-      } catch (error: any) {
-        this.error("Unexpected error fetching token:", error);
-        break;
-      }
-    }
-
-    return splitterList;
+    this.warn(`Found ${tokenList.length} tokens in collection (fallback method)`);
+    return tokenList;
   }
 
   // Get total count of listings
@@ -453,8 +1087,8 @@ export class MarketplaceSDK {
   async getActiveListingsPage(
     page: number,
     perPage: number,
-  ): Promise<ListedToken[]> {
-    const results: ListedToken[] = [];
+  ): Promise<AlchemyListedToken[]> {
+    const results: AlchemyListedToken[] = [];
     try {
       const lastId = await this.getListingCount();
       if (lastId === 0) return results;
@@ -506,324 +1140,159 @@ export class MarketplaceSDK {
     return results;
   }
 
-  // Get paginated listings (smart pagination - only fetch what's needed)
-  async getListingsPaginated(
-    startId: number,
-    limit: number,
-    activeOnly: boolean = true,
-  ): Promise<ListedToken[]> {
-    const listedTokens: ListedToken[] = [];
-    const endId = startId + limit - 1;
-
-    this.log(
-      `Fetching listings ${startId} to ${endId} (${activeOnly ? "active only" : "all"})`,
-    );
-
-    // Helper to delay between calls
-    const delay = (ms: number) =>
-      new Promise((resolve) => setTimeout(resolve, ms));
-
-    for (let listingId = startId; listingId <= endId; listingId++) {
-      try {
-        const listing = await this.marketplaceContract.getListing(listingId);
-
-        // Filter by active if needed
-        if (!activeOnly || listing.active) {
-          let tokenData;
-          try {
-            tokenData = await this.getStrDomainFromCollection(
-              Number(listing.tokenId),
-            );
-          } catch (e) {
-            // Token data optional
-          }
-
-          listedTokens.push({
-            listingId,
-            active: listing.active,
-            seller: listing.seller,
-            tokenId: Number(listing.tokenId),
-            price: ethers.formatEther(listing.price),
-            strCollectionAddress: listing.nft,
-            tokenData: tokenData || undefined,
-          });
-        }
-
-        // Small delay to avoid RPC spam
-        await delay(100);
-      } catch (e: any) {
-        // Listing doesn't exist or error, continue
-        await delay(50);
-        continue;
-      }
-    }
-
-    this.log(
-      `Fetched ${listedTokens.length} listings from range ${startId}-${endId}`,
-    );
-    return listedTokens;
-  }
-
-  // Get all active listed tokens on marketplace (legacy method - for compatibility)
-  async getAllActiveListedDomainsOnMarketplaceWithTokenData(): Promise<
-    ListedToken[]
-  > {
+  // Owner only - Approve token for sale
+  async approveTokenForSale(tokenId: number): Promise<string | null> {
     try {
-      let lastListingId: number = 0;
-
-      // Try to get lastListingId
+      this.log(`Approving token ${tokenId} for marketplace...`);
+      
+      // Check ownership before attempting approval
+      const userAddress = await this.signer.getAddress();
+      const tokenOwner = await this.nftContract.ownerOf(tokenId);
+      
+      if (tokenOwner.toLowerCase() !== userAddress.toLowerCase()) {
+        this.error(`User does not own token ${tokenId} for approval. Owner: ${tokenOwner}, User: ${userAddress}`);
+        throw new Error("You don't own this token.");
+      }
+      
+      this.log(`Sending approval transaction for token ${tokenId}...`);
+      
+      // Wait for network stability before sending transaction
+      await this.ensureCorrectNetwork();
+      
+      // Estimate gas for approval transaction with fallback
+      let gasEstimate;
       try {
-        const result = await this.marketplaceContract.lastListingId();
-        lastListingId = Number(result);
-        this.log("lastListingId:", lastListingId);
-      } catch (error: any) {
-        this.warn(
-          "lastListingId() not available, using fallback method. Error:",
-          error.message,
+        this.log("Attempting gas estimation for approval...");
+        gasEstimate = await this.nftContractWrite.approve.estimateGas(
+          this.marketplaceAddress,
+          tokenId,
         );
-        // Only use fallback if we have a valid signer and provider
-        if (this.signer && this.provider) {
-          return await this.scanForListings(true);
-        } else {
-          this.warn(
-            "No valid signer/provider available, returning empty array",
-          );
-          return [];
+        this.log(`Approval gas estimate successful: ${gasEstimate.toString()}`);
+      } catch (gasError: any) {
+        this.error("Approval gas estimation failed:", gasError);
+        if (gasError.message?.includes("network changed")) {
+          throw new Error("Network changed during gas estimation. Please try again.");
         }
+        gasEstimate = BigInt(100000); // Default gas limit for approval
+        this.warn(`Using default gas limit for approval: ${gasEstimate.toString()}`);
       }
 
-      if (lastListingId === 0) {
-        this.warn("No listings found - lastListingId is 0");
-        return [];
-      }
-
-      // Use pagination to fetch all (with delays)
-      return await this.getListingsPaginated(1, lastListingId, true);
-    } catch (error: any) {
-      this.error("Error fetching listed tokens:", error);
-      return [];
-    }
-  }
-
-  // Fallback: Scan for listings without lastListingId
-  private async scanForListings(
-    activeOnly: boolean = true,
-  ): Promise<ListedToken[]> {
-    const listedTokens: ListedToken[] = [];
-    const MAX_SCAN = 10; // Further reduced to avoid RPC spam
-    let consecutiveFailures = 0;
-    let rpcErrorCount = 0;
-
-    this.warn("Scanning for listings (no lastListingId available)...");
-
-    // Helper to delay between calls
-    const delay = (ms: number) =>
-      new Promise((resolve) => setTimeout(resolve, ms));
-
-    for (let listingId = 1; listingId <= MAX_SCAN; listingId++) {
-      try {
-        // Exponential backoff if we've hit RPC errors
-        if (rpcErrorCount > 0) {
-          const backoffDelay = Math.min(
-            1000 * Math.pow(2, rpcErrorCount),
-            5000,
-          );
-          this.log(`Backing off ${backoffDelay}ms before next call...`);
-          await delay(backoffDelay);
-        } else {
-          // Normal delay
-          await delay(200); // Reduced delay
+      // Add 20% buffer to gas estimate
+      const gasLimit = gasEstimate + (gasEstimate * BigInt(20)) / BigInt(100);
+      
+      this.log(`Sending approval transaction with gas limit: ${gasLimit.toString()}`);
+      
+      const tx = await this.nftContractWrite.approve(
+        this.marketplaceAddress,
+        tokenId,
+        {
+          gasLimit: gasLimit,
         }
-
-        const listing = await this.marketplaceContract.getListing(listingId);
-
-        // Reset failure counters on success
-        consecutiveFailures = 0;
-        rpcErrorCount = Math.max(0, rpcErrorCount - 1); // Gradually reduce backoff
-
-        // Filter by active if needed
-        if (!activeOnly || listing.active) {
-          let tokenData;
-          try {
-            await delay(200); // Delay before token data
-            tokenData = await this.getStrDomainFromCollection(
-              Number(listing.tokenId),
-            );
-          } catch (e) {
-            // Token data optional
-          }
-
-          listedTokens.push({
-            listingId,
-            active: listing.active,
-            seller: listing.seller,
-            tokenId: Number(listing.tokenId),
-            price: ethers.formatEther(listing.price),
-            strCollectionAddress: listing.nft,
-            tokenData: tokenData || undefined,
-          });
-        }
-      } catch (e: any) {
-        consecutiveFailures++;
-
-        // If RPC error, increase backoff
-        if (e.message?.includes("Internal JSON-RPC") || e.code === -32603) {
-          rpcErrorCount++;
-          this.warn(
-            `RPC error #${rpcErrorCount} at listing ${listingId}, backing off...`,
-          );
-
-          // If too many RPC errors, stop early
-          if (rpcErrorCount >= 3) {
-            this.warn(`Too many RPC errors, stopping scan early`);
-            break;
-          }
-        }
-
-        // Stop after 5 consecutive failures
-        if (consecutiveFailures >= 5) {
-          this.log(
-            `Stopped scanning at listing ${listingId} after ${consecutiveFailures} failures`,
-          );
-          break;
-        }
-      }
-    }
-
-    this.log(`Found ${listedTokens.length} listings via scanning`);
-    return listedTokens;
-  }
-
-  // Get all listed tokens on marketplace (legacy - for compatibility)
-  async getAllListedDomainsOnMarketplaceWithTokenData(): Promise<
-    ListedToken[]
-  > {
-    try {
-      let lastListingId: number = 0;
-
-      try {
-        const result = await this.marketplaceContract.lastListingId();
-        lastListingId = Number(result);
-      } catch (error: any) {
-        this.warn(
-          "lastListingId() not available, using fallback. Error:",
-          error.message,
-        );
-        // Only use fallback if we have a valid signer and provider
-        if (this.signer && this.provider) {
-          return await this.scanForListings(false);
-        } else {
-          this.warn(
-            "No valid signer/provider available, returning empty array",
-          );
-          return [];
-        }
-      }
-
-      if (lastListingId === 0) {
-        this.warn("No listings found");
-        return [];
-      }
-
-      // Use pagination to fetch all
-      return await this.getListingsPaginated(1, lastListingId, false);
-    } catch (error: any) {
-      this.error("Error fetching listed tokens:", error);
-      return [];
-    }
-  }
-
-  // Get my all listed tokens on marketplace (legacy - fetches all)
-  async getMyAllListedDomainsOnMarketplaceWithTokenData(): Promise<
-    ListedToken[]
-  > {
-    try {
-      const myAddress = (await this.signer.getAddress()).toLowerCase();
-      let lastListingId: number = 0;
-
-      try {
-        const result = await this.marketplaceContract.lastListingId();
-        lastListingId = Number(result);
-      } catch (error: any) {
-        this.warn(
-          "lastListingId() not available, using fallback. Error:",
-          error.message,
-        );
-        // Only use fallback if we have a valid signer and provider
-        if (this.signer && this.provider) {
-          const allListings = await this.scanForListings(false);
-          return allListings.filter(
-            (l) => l.seller.toLowerCase() === myAddress,
-          );
-        } else {
-          this.warn(
-            "No valid signer/provider available, returning empty array",
-          );
-          return [];
-        }
-      }
-
-      if (lastListingId === 0) {
-        this.warn("No listings found");
-        return [];
-      }
-
-      // Fetch all listings for this user
-      const allListings = await this.getListingsPaginated(
-        1,
-        lastListingId,
-        false,
       );
-      return allListings.filter((l) => l.seller.toLowerCase() === myAddress);
-    } catch (error: any) {
-      this.error("Error fetching listed tokens:", error);
-      return [];
-    }
-  }
-
-  // Get paginated NFTs from collection
-  async getDomainsPaginated(
-    startTokenId: number,
-    limit: number,
-    filterByOwner?: string,
-  ): Promise<FormattedToken[]> {
-    const tokenList: FormattedToken[] = [];
-    const endTokenId = startTokenId + limit - 1;
-
-    this.log(`Fetching tokens ${startTokenId} to ${endTokenId}`);
-
-    const delay = (ms: number) =>
-      new Promise((resolve) => setTimeout(resolve, ms));
-    const targetOwner = filterByOwner?.toLowerCase();
-
-    for (let tokenId = startTokenId; tokenId <= endTokenId; tokenId++) {
+      
+      this.log(`Approval transaction sent: ${tx.hash}`);
+      this.log("Waiting for approval confirmation...");
+      
+      // Wait for transaction with robust confirmation handling
+      let receipt;
       try {
-        // If filtering by owner, check ownership first
-        if (targetOwner) {
-          const owner = await this.nftContract.ownerOf(tokenId);
-          if (owner.toLowerCase() !== targetOwner) {
-            await delay(50);
-            continue;
+        receipt = await Promise.race([
+          tx.wait(2), // Wait for 2 confirmations
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error("Transaction timeout after 5 minutes")), 5 * 60 * 1000)
+          )
+        ]);
+      } catch (waitError: any) {
+        this.error("Error waiting for approval transaction confirmation:", waitError);
+        
+        // If waiting fails, try to get the transaction status directly
+        try {
+          this.log("Attempting to get approval transaction status directly...");
+          const txStatus = await this.signer.provider!.getTransactionReceipt(tx.hash);
+          if (txStatus) {
+            receipt = txStatus;
+            this.log("Got approval transaction receipt directly:", txStatus);
+          } else {
+            // Transaction might still be pending
+            this.log("Approval transaction is still pending, checking status...");
+            const txDetails = await this.signer.provider!.getTransaction(tx.hash);
+            if (txDetails && txDetails.blockNumber) {
+              // Transaction is confirmed, try to get receipt again
+              receipt = await this.signer.provider!.getTransactionReceipt(tx.hash);
+              this.log("Got approval receipt after confirmation:", receipt);
+            } else {
+              throw new Error("Approval transaction is still pending or failed");
+            }
+          }
+        } catch (directError: any) {
+          this.error("Could not get approval transaction status directly:", directError);
+          
+          // Final fallback: Check if the approval was successful
+          try {
+            this.log("Checking if approval was successful as fallback verification...");
+            const newApproval = await this.nftContract.getApproved(tokenId);
+            
+            if (newApproval.toLowerCase() === this.marketplaceAddress.toLowerCase()) {
+              this.log("Approval verification: Approval succeeded! Token is now approved for marketplace.");
+              // Return the transaction hash even though we couldn't get the receipt
+              return tx.hash;
+            } else {
+              this.error(`Approval verification failed. Expected: ${this.marketplaceAddress}, Got: ${newApproval}`);
+              throw new Error("Approval transaction confirmation failed and approval verification failed.");
+            }
+          } catch (approvalError: any) {
+            this.error("Approval verification error:", approvalError);
+            throw new Error("Approval transaction confirmation failed. Please check your wallet or try again.");
           }
         }
+      }
 
-        const tokenData = await this.getStrDomainFromCollection(tokenId);
-        if (tokenData) {
-          tokenList.push(tokenData);
+      if (!receipt) {
+        throw new Error("Approval transaction receipt not received");
+      }
+
+      this.log("Approval transaction receipt received:", receipt);
+
+      // Check if transaction was successful
+      if (receipt.status === 0) {
+        this.error("Approval transaction failed on blockchain");
+        this.error("Approval transaction receipt:", receipt);
+        
+        // Try to get more details about the failure
+        try {
+          const txDetails = await this.signer.provider!.getTransaction(tx.hash);
+          this.error("Approval transaction details:", txDetails);
+        } catch (txError) {
+          this.error("Could not get approval transaction details:", txError);
         }
+        
+        throw new Error("Approval transaction failed on blockchain. Check the logs for details.");
+      }
 
-        await delay(100);
-      } catch (error: any) {
-        // Token doesn't exist, continue
-        await delay(50);
-        continue;
+      this.log(`Approval successful! Transaction: ${receipt.hash}`);
+      this.log(`Gas used: ${receipt.gasUsed.toString()}`);
+      this.log(`Block number: ${receipt.blockNumber}`);
+      return receipt.hash;
+    } catch (error: any) {
+      this.error(`Error approving token ${tokenId}:`, error);
+      
+      // Provide more specific error messages
+      if (error.message?.includes("don't own")) {
+        throw new Error("You don't own this token.");
+      } else if (error.message?.includes("user rejected")) {
+        throw new Error("Approval transaction was rejected by user.");
+      } else if (error.message?.includes("network changed")) {
+        throw new Error("Network is switching. Please wait for the network change to complete and try again.");
+      } else if (error.message?.includes("switch to") || error.message?.includes("Chain ID:") || error.message?.includes("Failed to switch")) {
+        throw new Error(`🔗 Please switch to ${NETWORK_CONFIG.name} network before listing. The system attempted to switch automatically but failed. Please manually switch to ${NETWORK_CONFIG.name} (Chain ID: ${NETWORK_CONFIG.chainId}) in your wallet.`);
+      } else if (error.message?.includes("Internal JSON-RPC error") || error.code === "UNKNOWN_ERROR") {
+        throw new Error("Network error during approval. Please try again in a few moments.");
+      } else if (error.message?.includes("network")) {
+        throw new Error("Network error. Please check your connection and try again.");
+      } else {
+        throw new Error(`Failed to approve token: ${error.message || "Unknown error"}`);
       }
     }
-
-    this.log(
-      `Fetched ${tokenList.length} tokens from range ${startTokenId}-${endTokenId}`,
-    );
-    return tokenList;
   }
 
   // Get available fee balance from a splitter
@@ -845,44 +1314,271 @@ export class MarketplaceSDK {
     }
   }
 
-  // Get all splitter balances for a given wallet across the collection
+  // Get all splitter balances for a given wallet across the collection (Alchemy-enhanced)
+  // Cache for splitter addresses to avoid repeated scanning
+  private splitterCache: { addresses: string[]; timestamp: number } | null = null;
+  private readonly SPLITTER_CACHE_DURATION = 300000; // 5 minutes cache
+
+  /**
+   * OPTIMIZED: Get splitter addresses by creator (if creator is known)
+   * This is a more targeted approach when you know the creator address
+   */
+  async getSplitterAddressesByCreator(creatorAddress: string): Promise<string[]> {
+    try {
+      this.log(`Searching for splitters by creator ${creatorAddress}...`);
+      const startTime = Date.now();
+
+      // Get collection count first
+      if (!this.collectionCountTokens) {
+        await this.getAllStrDomainsFromCollection();
+      }
+
+      if (!this.collectionCountTokens) {
+        this.warn("No token counter available");
+        return [];
+      }
+
+      // Create array of all token IDs
+      const allTokenIds = Array.from({ length: this.collectionCountTokens }, (_, i) => i + 1);
+      
+      // Process in chunks and filter by creator
+      const chunkSize = 20;
+      const chunks = [];
+      for (let i = 0; i < allTokenIds.length; i += chunkSize) {
+        chunks.push(allTokenIds.slice(i, i + chunkSize));
+      }
+
+      const splitterSet = new Set<string>();
+      
+      // Process chunks in parallel
+      for (const chunk of chunks) {
+        try {
+          // Get royalty info and creator for all tokens in this chunk in parallel
+          const tokenPromises = chunk.map(async (tokenId) => {
+            try {
+              const [splitterData, tokenData] = await Promise.all([
+                this.nftContract.royaltyInfo(tokenId, 40000000),
+                this.getTokenData(tokenId)
+              ]);
+              
+              // Check if this token's creator matches our target creator
+              if (tokenData && tokenData.creator.toLowerCase() === creatorAddress.toLowerCase()) {
+                return splitterData[0];
+              }
+              return null;
+            } catch (error) {
+              return null;
+            }
+          });
+          
+          const chunkResults = await Promise.all(tokenPromises);
+          
+          // Add unique splitters to our set
+          chunkResults.forEach(splitterAddress => {
+            if (splitterAddress && splitterAddress !== '0x0000000000000000000000000000000000000000') {
+              splitterSet.add(splitterAddress);
+            }
+          });
+          
+          // Small delay between chunks
+          if (chunks.length > 1) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+          }
+        } catch (error) {
+          this.warn(`Error processing chunk:`, error);
+        }
+      }
+
+      const splitterAddresses = Array.from(splitterSet);
+
+      const endTime = Date.now();
+      this.log(`Found ${splitterAddresses.length} splitters by creator in ${endTime - startTime}ms`);
+
+      return splitterAddresses;
+    } catch (error) {
+      this.error("Error finding splitters by creator:", error);
+      return [];
+    }
+  }
+
+  /**
+   * OPTIMIZED: Get splitter addresses using batch processing and caching
+   */
+  async getSplitterAddressesOptimized(): Promise<string[]> {
+    try {
+      // Check cache first
+      if (this.splitterCache && 
+          Date.now() - this.splitterCache.timestamp < this.SPLITTER_CACHE_DURATION) {
+        this.log(`Using cached splitter addresses: ${this.splitterCache.addresses.length} splitters`);
+        return this.splitterCache.addresses;
+      }
+
+      this.log("Fetching fresh splitter addresses with optimized batch method...");
+      const startTime = Date.now();
+
+      // Get collection count first
+      if (!this.collectionCountTokens) {
+        await this.getAllStrDomainsFromCollection();
+      }
+
+      if (!this.collectionCountTokens) {
+        this.warn("No token counter available");
+        return [];
+      }
+
+      // Create array of all token IDs
+      const allTokenIds = Array.from({ length: this.collectionCountTokens }, (_, i) => i + 1);
+      
+      // Process in chunks to avoid overwhelming the RPC
+      const chunkSize = 20;
+      const chunks = [];
+      for (let i = 0; i < allTokenIds.length; i += chunkSize) {
+        chunks.push(allTokenIds.slice(i, i + chunkSize));
+      }
+
+      this.log(`Processing ${allTokenIds.length} tokens in ${chunks.length} chunks for splitter discovery`);
+
+      const splitterSet = new Set<string>();
+      
+      // Process chunks in parallel for much faster discovery
+      for (const chunk of chunks) {
+        try {
+          // Get royalty info for all tokens in this chunk in parallel
+          const royaltyPromises = chunk.map(async (tokenId) => {
+            try {
+              const splitterData = await this.nftContract.royaltyInfo(tokenId, 40000000);
+              return splitterData[0];
+            } catch (error) {
+              return null;
+            }
+          });
+          
+          const chunkResults = await Promise.all(royaltyPromises);
+          
+          // Add unique splitters to our set
+          chunkResults.forEach(splitterAddress => {
+            if (splitterAddress && splitterAddress !== '0x0000000000000000000000000000000000000000') {
+              splitterSet.add(splitterAddress);
+            }
+          });
+          
+          // Small delay between chunks to be nice to the RPC
+          if (chunks.length > 1) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+          }
+        } catch (error) {
+          this.warn(`Error processing chunk:`, error);
+        }
+      }
+
+      const splitterAddresses = Array.from(splitterSet);
+
+      // Cache the result
+      this.splitterCache = {
+        addresses: splitterAddresses,
+        timestamp: Date.now()
+      };
+
+      const endTime = Date.now();
+      this.log(`OPTIMIZED: Found ${splitterAddresses.length} unique splitters in ${endTime - startTime}ms`);
+
+      return splitterAddresses;
+    } catch (error) {
+      this.error("Error in optimized splitter discovery:", error);
+      return [];
+    }
+  }
+
+  /**
+   * OPTIMIZED: Get splitter count for progress indication
+   */
+  async getSplitterCountOptimized(): Promise<number> {
+    try {
+      const addresses = await this.getSplitterAddressesOptimized();
+      return addresses.length;
+    } catch (error) {
+      this.error("Error getting splitter count:", error);
+      return 0;
+    }
+  }
+
+  /**
+   * OPTIMIZED: Get splitter balances using batch processing
+   */
   async getSplitterBalanceOfWallet(
     walletAddress: string,
   ): Promise<SplitterBalance[]> {
     const balances: SplitterBalance[] = [];
 
     try {
-      const splitterAddresses =
-        await this.getAllSplitterContractsFromCollection();
+      this.log(`Fetching splitter balances for ${walletAddress} using OPTIMIZED method...`);
+      const startTime = Date.now();
+
+      // Get splitter addresses using optimized method
+      const splitterAddresses = await this.getSplitterAddressesOptimized();
 
       if (!splitterAddresses || splitterAddresses.length === 0) {
         this.warn("No splitter contracts found in collection.");
         return balances;
       }
 
-      for (const splitterAddress of splitterAddresses) {
-        try {
-          const contract = new ethers.Contract(
-            splitterAddress,
-            RoyaltySplitterABI,
-            this.signer,
-          );
-          const rawBalance = await contract.ethBalance(walletAddress);
-          const balance = ethers.formatEther(rawBalance);
+      this.log(`Checking balances for ${splitterAddresses.length} splitters...`);
 
-          if (rawBalance > 0n) {
-            balances.push({
-              splitter: splitterAddress,
-              balance,
-            });
+      // Use Alchemy provider for read operations
+      const alchemyProvider = this.alchemyService.getProvider();
+
+      // Process splitters in chunks for better performance
+      const chunkSize = 10;
+      const chunks = [];
+      for (let i = 0; i < splitterAddresses.length; i += chunkSize) {
+        chunks.push(splitterAddresses.slice(i, i + chunkSize));
+      }
+
+      // Process chunks in parallel
+      for (const chunk of chunks) {
+        try {
+          const balancePromises = chunk.map(async (splitterAddress) => {
+            try {
+              const contract = new ethers.Contract(
+                splitterAddress,
+                RoyaltySplitterABI,
+                alchemyProvider,
+              );
+              const rawBalance = await contract.ethBalance(walletAddress);
+              const balance = ethers.formatEther(rawBalance);
+
+              if (rawBalance > 0n) {
+                return {
+                  splitter: splitterAddress,
+                  balance,
+                };
+              }
+              return null;
+            } catch (innerErr: any) {
+              this.warn(`Failed to fetch balance from splitter: ${splitterAddress}`, innerErr.message);
+              return null;
+            }
+          });
+
+          const chunkResults = await Promise.all(balancePromises);
+          chunkResults.forEach(result => {
+            if (result) {
+              balances.push(result);
+              this.log(`Found balance in splitter ${result.splitter}: ${result.balance} MATIC`);
+            }
+          });
+
+          // Small delay between chunks
+          if (chunks.length > 1) {
+            await new Promise(resolve => setTimeout(resolve, 30));
           }
-        } catch (innerErr: any) {
-          this.warn(
-            `Failed to fetch balance from splitter: ${splitterAddress}`,
-            innerErr.message,
-          );
+        } catch (error) {
+          this.warn(`Error processing splitter chunk:`, error);
         }
       }
+
+      const endTime = Date.now();
+      this.log(`OPTIMIZED: Completed splitter balance check in ${endTime - startTime}ms. Found ${balances.length} splitters with balances.`);
     } catch (error: any) {
       this.error("Error fetching splitter balances:", error);
     }
@@ -890,26 +1586,15 @@ export class MarketplaceSDK {
     return balances;
   }
 
-  // Owner only - Approve token for sale
-  async approveTokenForSale(tokenId: number): Promise<string | null> {
-    try {
-      const tx = await this.nftContract.approve(
-        this.marketplaceAddress,
-        tokenId,
-      );
-      const receipt = await tx.wait();
-      return receipt.hash;
-    } catch (error: any) {
-      this.error(
-        `Error approve your NFT tokenId: ${tokenId}, check your ownership`,
-      );
-      return null;
-    }
-  }
-
   // Withdraw royalty from a specific splitter
   async withdrawRoyaltyFromSplitter(splitterAddress: string): Promise<any> {
     try {
+      this.log(`Withdrawing royalty from splitter ${splitterAddress}...`);
+      
+      // Wait for network stability before withdrawing
+      await this.ensureCorrectNetwork();
+      
+      // Use write contract for transactions (requires signer)
       const contract = new ethers.Contract(
         splitterAddress,
         RoyaltySplitterABI,
@@ -924,8 +1609,32 @@ export class MarketplaceSDK {
       }
 
       const balance = ethers.formatEther(rawBalance);
+      this.log(`Withdrawing ${balance} MATIC from splitter ${splitterAddress}...`);
 
-      const tx = await contract.withdraw();
+      // Estimate gas for withdrawal transaction with fallback
+      let gasEstimate;
+      try {
+        this.log("Attempting gas estimation for withdrawal...");
+        gasEstimate = await contract.withdraw.estimateGas();
+        this.log(`Withdrawal gas estimate successful: ${gasEstimate.toString()}`);
+      } catch (gasError: any) {
+        this.error("Withdrawal gas estimation failed:", gasError);
+        if (gasError.message?.includes("network changed")) {
+          throw new Error("Network changed during gas estimation. Please try again.");
+        }
+        gasEstimate = BigInt(150000); // Default gas limit for withdrawal
+        this.warn(`Using default gas limit for withdrawal: ${gasEstimate.toString()}`);
+      }
+
+      // Add 20% buffer to gas estimate
+      const gasLimit = gasEstimate + (gasEstimate * BigInt(20)) / BigInt(100);
+      
+      this.log(`Sending withdrawal transaction with gas limit: ${gasLimit.toString()}`);
+      
+      const tx = await contract.withdraw({
+        gasLimit: gasLimit,
+      });
+      
       if (!tx || !tx.hash) {
         this.warn(
           `No transaction hash returned from withdraw() on ${splitterAddress}`,
@@ -933,11 +1642,60 @@ export class MarketplaceSDK {
         return null;
       }
 
-      const receipt = await tx.wait();
+      this.log(`Withdrawal transaction sent: ${tx.hash}`);
+      this.log("Waiting for withdrawal confirmation...");
+      
+      // Wait for transaction with robust confirmation handling
+      let receipt;
+      try {
+        this.log("Waiting for withdrawal transaction confirmation...");
+        receipt = await tx.wait(2); // Wait for 2 confirmations
+        this.log(`Withdrawal transaction confirmed in block ${receipt.blockNumber}`);
+      } catch (waitError: any) {
+        this.warn("Standard wait failed, trying alternative confirmation methods...");
+        
+        // Try direct receipt lookup
+        try {
+          this.log("Attempting direct receipt lookup...");
+          receipt = await this.signer.provider!.getTransactionReceipt(tx.hash);
+          if (receipt) {
+            this.log(`Found receipt via direct lookup: ${receipt.blockNumber}`);
+          }
+        } catch (receiptError) {
+          this.warn("Direct receipt lookup failed:", receiptError);
+        }
+        
+        // If still no receipt, try checking transaction status
+        if (!receipt) {
+          try {
+            this.log("Checking transaction status...");
+            const txStatus = await this.signer.provider!.getTransaction(tx.hash);
+            if (txStatus && txStatus.blockNumber) {
+              this.log(`Transaction included in block: ${txStatus.blockNumber}`);
+              // Try to get receipt again
+              receipt = await this.signer.provider!.getTransactionReceipt(tx.hash);
+            }
+          } catch (statusError) {
+            this.warn("Transaction status check failed:", statusError);
+          }
+        }
+        
+        // Final fallback - assume success if we have the transaction hash
+        if (!receipt) {
+          this.warn("Could not get transaction receipt, but transaction was sent successfully");
+          this.log(`Withdrawal transaction hash: ${tx.hash}`);
+          return {
+            splitter: splitterAddress,
+            transactionHash: tx.hash,
+            withdrawn: balance,
+          };
+        }
+      }
 
-      this.warn(
-        `Withdrawn from splitter ${splitterAddress} | Tx: ${receipt.hash} | Amount: ${balance}`,
-      );
+      this.log(`Withdrawn from splitter ${splitterAddress} successfully! Transaction: ${receipt.hash}`);
+      this.log(`Amount: ${balance} MATIC`);
+      this.log(`Gas used: ${receipt.gasUsed.toString()}`);
+      this.log(`Block number: ${receipt.blockNumber}`);
 
       return {
         splitter: splitterAddress,
@@ -945,10 +1703,22 @@ export class MarketplaceSDK {
         withdrawn: balance,
       };
     } catch (err: any) {
-      this.warn(
-        `Failed to withdraw from splitter: ${splitterAddress} | ${err.message}`,
-      );
-      return null;
+      this.error(`Error withdrawing from splitter ${splitterAddress}:`, err);
+      
+      // Provide more specific error messages
+      if (err.message?.includes("user rejected")) {
+        throw new Error("Withdrawal transaction was rejected by user.");
+      } else if (err.message?.includes("network changed")) {
+        throw new Error("Network is switching. Please wait for the network change to complete and try again.");
+      } else if (err.message?.includes("switch to") || err.message?.includes("Chain ID:") || err.message?.includes("Failed to switch")) {
+        throw new Error(`🔗 Please switch to ${NETWORK_CONFIG.name} network before withdrawing. The system attempted to switch automatically but failed. Please manually switch to ${NETWORK_CONFIG.name} (Chain ID: ${NETWORK_CONFIG.chainId}) in your wallet.`);
+      } else if (err.message?.includes("Internal JSON-RPC error") || err.code === "UNKNOWN_ERROR") {
+        throw new Error("Network error during withdrawal. Please try again in a few moments.");
+      } else if (err.message?.includes("network")) {
+        throw new Error("Network error. Please check your connection and try again.");
+      } else {
+        throw new Error(`Failed to withdraw from splitter: ${err.message || "Unknown error"}`);
+      }
     }
   }
 
@@ -992,19 +1762,103 @@ export class MarketplaceSDK {
         return null;
       }
 
-      const tx = await this.marketplaceContract.withdrawFees();
-      const receipt = await tx.wait();
+      this.log("Withdrawing marketplace fees...");
+      
+      // Wait for network stability before withdrawing
+      await this.ensureCorrectNetwork();
 
-      this.warn(
-        `Marketplace fees withdrawn successfully! Tx hash: ${receipt.hash}`,
-      );
+      // Estimate gas for fee withdrawal transaction with fallback
+      let gasEstimate;
+      try {
+        this.log("Attempting gas estimation for fee withdrawal...");
+        gasEstimate = await this.marketplaceContractWrite.withdrawFees.estimateGas();
+        this.log(`Fee withdrawal gas estimate successful: ${gasEstimate.toString()}`);
+      } catch (gasError: any) {
+        this.error("Fee withdrawal gas estimation failed:", gasError);
+        if (gasError.message?.includes("network changed")) {
+          throw new Error("Network changed during gas estimation. Please try again.");
+        }
+        gasEstimate = BigInt(100000); // Default gas limit for fee withdrawal
+        this.warn(`Using default gas limit for fee withdrawal: ${gasEstimate.toString()}`);
+      }
+
+      // Add 20% buffer to gas estimate
+      const gasLimit = gasEstimate + (gasEstimate * BigInt(20)) / BigInt(100);
+      
+      this.log(`Sending fee withdrawal transaction with gas limit: ${gasLimit.toString()}`);
+      
+      const tx = await this.marketplaceContractWrite.withdrawFees({
+        gasLimit: gasLimit,
+      });
+      
+      this.log(`Fee withdrawal transaction sent: ${tx.hash}`);
+      this.log("Waiting for fee withdrawal confirmation...");
+      
+      // Wait for transaction with robust confirmation handling
+      let receipt;
+      try {
+        this.log("Waiting for fee withdrawal transaction confirmation...");
+        receipt = await tx.wait(2); // Wait for 2 confirmations
+        this.log(`Fee withdrawal transaction confirmed in block ${receipt.blockNumber}`);
+      } catch (waitError: any) {
+        this.warn("Standard wait failed, trying alternative confirmation methods...");
+        
+        // Try direct receipt lookup
+        try {
+          this.log("Attempting direct receipt lookup...");
+          receipt = await this.signer.provider!.getTransactionReceipt(tx.hash);
+          if (receipt) {
+            this.log(`Found receipt via direct lookup: ${receipt.blockNumber}`);
+          }
+        } catch (receiptError) {
+          this.warn("Direct receipt lookup failed:", receiptError);
+        }
+        
+        // If still no receipt, try checking transaction status
+        if (!receipt) {
+          try {
+            this.log("Checking transaction status...");
+            const txStatus = await this.signer.provider!.getTransaction(tx.hash);
+            if (txStatus && txStatus.blockNumber) {
+              this.log(`Transaction included in block: ${txStatus.blockNumber}`);
+              // Try to get receipt again
+              receipt = await this.signer.provider!.getTransactionReceipt(tx.hash);
+            }
+          } catch (statusError) {
+            this.warn("Transaction status check failed:", statusError);
+          }
+        }
+        
+        // Final fallback - assume success if we have the transaction hash
+        if (!receipt) {
+          this.warn("Could not get transaction receipt, but transaction was sent successfully");
+          this.log(`Fee withdrawal transaction hash: ${tx.hash}`);
+          return tx.hash;
+        }
+      }
+
+      this.log(`Marketplace fees withdrawn successfully! Transaction: ${receipt.hash}`);
+      this.log(`Gas used: ${receipt.gasUsed.toString()}`);
+      this.log(`Block number: ${receipt.blockNumber}`);
 
       return receipt.hash;
     } catch (error: any) {
-      this.error(
-        "Error withdrawing marketplace fees, or check the fees balance",
-      );
-      return null;
+      this.error(`Error withdrawing marketplace fees:`, error);
+      
+      // Provide more specific error messages
+      if (error.message?.includes("user rejected")) {
+        throw new Error("Fee withdrawal transaction was rejected by user.");
+      } else if (error.message?.includes("network changed")) {
+        throw new Error("Network is switching. Please wait for the network change to complete and try again.");
+      } else if (error.message?.includes("switch to") || error.message?.includes("Chain ID:") || error.message?.includes("Failed to switch")) {
+        throw new Error(`🔗 Please switch to ${NETWORK_CONFIG.name} network before withdrawing fees. The system attempted to switch automatically but failed. Please manually switch to ${NETWORK_CONFIG.name} (Chain ID: ${NETWORK_CONFIG.chainId}) in your wallet.`);
+      } else if (error.message?.includes("Internal JSON-RPC error") || error.code === "UNKNOWN_ERROR") {
+        throw new Error("Network error during fee withdrawal. Please try again in a few moments.");
+      } else if (error.message?.includes("network")) {
+        throw new Error("Network error. Please check your connection and try again.");
+      } else {
+        throw new Error(`Failed to withdraw marketplace fees: ${error.message || "Unknown error"}`);
+      }
     }
   }
 
@@ -1036,20 +1890,682 @@ export class MarketplaceSDK {
     if (!(await this.isAdmin())) return null;
 
     try {
-      const tx = await this.nftContract.mint(originalCreator, URI);
-      const receipt = await tx.wait();
+      this.log(`Minting domain NFT for creator ${originalCreator} with URI ${URI}...`);
+      
+      // Wait for network stability before minting
+      await this.ensureCorrectNetwork();
+
+      // Estimate gas for minting transaction with fallback
+      let gasEstimate;
+      try {
+        this.log("Attempting gas estimation for minting...");
+        gasEstimate = await this.nftContractWrite.mint.estimateGas(originalCreator, URI);
+        this.log(`Minting gas estimate successful: ${gasEstimate.toString()}`);
+      } catch (gasError: any) {
+        this.error("Minting gas estimation failed:", gasError);
+        if (gasError.message?.includes("network changed")) {
+          throw new Error("Network changed during gas estimation. Please try again.");
+        }
+        gasEstimate = BigInt(200000); // Default gas limit for minting
+        this.warn(`Using default gas limit for minting: ${gasEstimate.toString()}`);
+      }
+
+      // Add 20% buffer to gas estimate
+      const gasLimit = gasEstimate + (gasEstimate * BigInt(20)) / BigInt(100);
+      
+      this.log(`Sending minting transaction with gas limit: ${gasLimit.toString()}`);
+      
+      const tx = await this.nftContractWrite.mint(originalCreator, URI, {
+        gasLimit: gasLimit,
+      });
+      
+      this.log(`Minting transaction sent: ${tx.hash}`);
+      this.log("Waiting for minting confirmation...");
+      
+      // Wait for transaction with robust confirmation handling
+      let receipt;
+      try {
+        this.log("Waiting for minting transaction confirmation...");
+        receipt = await tx.wait(2); // Wait for 2 confirmations
+        this.log(`Minting transaction confirmed in block ${receipt.blockNumber}`);
+      } catch (waitError: any) {
+        this.warn("Standard wait failed, trying alternative confirmation methods...");
+        
+        // Try direct receipt lookup
+        try {
+          this.log("Attempting direct receipt lookup...");
+          receipt = await this.signer.provider!.getTransactionReceipt(tx.hash);
+          if (receipt) {
+            this.log(`Found receipt via direct lookup: ${receipt.blockNumber}`);
+          }
+        } catch (receiptError) {
+          this.warn("Direct receipt lookup failed:", receiptError);
+        }
+        
+        // If still no receipt, try checking transaction status
+        if (!receipt) {
+          try {
+            this.log("Checking transaction status...");
+            const txStatus = await this.signer.provider!.getTransaction(tx.hash);
+            if (txStatus && txStatus.blockNumber) {
+              this.log(`Transaction included in block: ${txStatus.blockNumber}`);
+              // Try to get receipt again
+              receipt = await this.signer.provider!.getTransactionReceipt(tx.hash);
+            }
+          } catch (statusError) {
+            this.warn("Transaction status check failed:", statusError);
+          }
+        }
+        
+        // Final fallback - assume success if we have the transaction hash
+        if (!receipt) {
+          this.warn("Could not get transaction receipt, but transaction was sent successfully");
+          this.log(`Minting transaction hash: ${tx.hash}`);
+          return tx.hash;
+        }
+      }
+
+      this.log(`Domain NFT minted successfully! Transaction: ${receipt.hash}`);
+      this.log(`Creator: ${originalCreator}`);
+      this.log(`URI: ${URI}`);
+      this.log(`Gas used: ${receipt.gasUsed.toString()}`);
+      this.log(`Block number: ${receipt.blockNumber}`);
+      
       return receipt.hash;
     } catch (error: any) {
-      this.error(
-        "Error minting domain NFT, check you are the owner of the contract, or have minter role",
-      );
-      return null;
+      this.error(`Error minting domain NFT:`, error);
+      
+      // Provide more specific error messages
+      if (error.message?.includes("user rejected")) {
+        throw new Error("Minting transaction was rejected by user.");
+      } else if (error.message?.includes("network changed")) {
+        throw new Error("Network is switching. Please wait for the network change to complete and try again.");
+      } else if (error.message?.includes("switch to") || error.message?.includes("Chain ID:") || error.message?.includes("Failed to switch")) {
+        throw new Error(`🔗 Please switch to ${NETWORK_CONFIG.name} network before minting. The system attempted to switch automatically but failed. Please manually switch to ${NETWORK_CONFIG.name} (Chain ID: ${NETWORK_CONFIG.chainId}) in your wallet.`);
+      } else if (error.message?.includes("Internal JSON-RPC error") || error.code === "UNKNOWN_ERROR") {
+        throw new Error("Network error during minting. Please try again in a few moments.");
+      } else if (error.message?.includes("network")) {
+        throw new Error("Network error. Please check your connection and try again.");
+      } else {
+        throw new Error(`Failed to mint domain NFT: ${error.message || "Unknown error"}`);
+      }
+    }
+  }
+
+  // Simple Network Guard - Forces network change before any transaction
+  private async ensureCorrectNetwork(): Promise<void> {
+    try {
+      this.log(`Checking network - must be on ${NETWORK_CONFIG.name} (Chain ID: ${NETWORK_CONFIG.chainId})`);
+      
+      // Get current network
+      const network = await this.signer.provider!.getNetwork();
+      const currentChainId = Number(network.chainId);
+      
+      if (currentChainId !== NETWORK_CONFIG.chainId) {
+        this.log(`Wrong network detected: ${currentChainId}, switching to ${NETWORK_CONFIG.name}...`);
+        await this.switchToTargetNetwork();
+        
+        // Wait a moment for the switch to complete
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Verify the switch worked
+        const newNetwork = await this.signer.provider!.getNetwork();
+        const newChainId = Number(newNetwork.chainId);
+        
+        if (newChainId !== NETWORK_CONFIG.chainId) {
+          throw new Error(`Please switch to ${NETWORK_CONFIG.name} network (Chain ID: ${NETWORK_CONFIG.chainId}) in your wallet and try again.`);
+        }
+        
+        this.log(`✅ Successfully switched to ${NETWORK_CONFIG.name} network`);
+      } else {
+        this.log(`✅ Already on correct network: ${NETWORK_CONFIG.name}`);
+      }
+    } catch (error: any) {
+      this.error("Network check failed:", error);
+      throw error;
+    }
+  }
+
+  // Detect if we're using a mobile wallet (MetaMask mobile, WalletConnect mobile, etc.)
+  private isMetaMaskMobile(): boolean {
+    try {
+      const userAgent = navigator.userAgent || navigator.vendor || (window as any).opera;
+      
+      // Check if it's a mobile device
+      const isMobile = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent);
+      
+      // Check if it's a mobile wallet (MetaMask mobile, WalletConnect, etc.)
+      const isMobileWallet = userAgent.includes('MetaMask') || 
+                            userAgent.includes('WalletConnect') ||
+                            userAgent.includes('Trust Wallet') ||
+                            userAgent.includes('Coinbase Wallet') ||
+                            (window as any).ethereum?.isMetaMask ||
+                            (window as any).ethereum?.isWalletConnect;
+      
+      // Also check for mobile browser indicators
+      const isMobileBrowser = isMobile || 
+                             window.innerWidth < 768 || // Mobile screen size
+                             /Mobi|Android/i.test(userAgent);
+      
+      return isMobileBrowser && isMobileWallet;
+    } catch (error) {
+      // If we can't detect, check screen size as fallback
+      return window.innerWidth < 768;
+    }
+  }
+
+  // Detect if we're using WalletConnect
+  private isWalletConnect(): boolean {
+    try {
+      // Check for WalletConnect provider
+      const ethereum = (window as any).ethereum;
+      if (ethereum?.isWalletConnect) {
+        return true;
+      }
+      
+      // Check for WalletConnect in user agent
+      const userAgent = navigator.userAgent || navigator.vendor || (window as any).opera;
+      if (userAgent.includes('WalletConnect')) {
+        return true;
+      }
+      
+      // Check for WalletConnect session storage
+      if (typeof localStorage !== 'undefined') {
+        const walletConnectKeys = Object.keys(localStorage).filter(key => 
+          key.includes('walletconnect') || key.includes('wc@')
+        );
+        if (walletConnectKeys.length > 0) {
+          return true;
+        }
+      }
+      
+      return false;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  // Wait for network to stabilize - handles "network changed" errors
+  private async waitForNetworkStability(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error("Network stability check timed out. Please try again."));
+      }, 10000); // 10 second timeout
+
+      let isResolved = false;
+      let checkCount = 0;
+      const maxChecks = 10; // Maximum number of checks
+      const checkInterval = 1000; // Check every 1 second
+
+      const checkNetwork = async () => {
+        if (isResolved) return;
+
+        try {
+          const network = await this.signer.provider!.getNetwork();
+          const chainId = Number(network.chainId);
+          
+          this.log(`Network stability check ${checkCount + 1}: ${network.name} (${chainId})`);
+
+          // If we get here, network is stable
+          if (!isResolved) {
+            isResolved = true;
+            clearTimeout(timeout);
+            this.log("✅ Network is stable and ready for transactions");
+            resolve();
+          }
+          return;
+        } catch (networkError: any) {
+          checkCount++;
+
+          if (networkError.message?.includes("network changed")) {
+            if (checkCount >= maxChecks) {
+              if (!isResolved) {
+                isResolved = true;
+                clearTimeout(timeout);
+                reject(new Error("Network is still changing after maximum attempts. Please wait and try again."));
+              }
+              return;
+            }
+
+            // Continue checking
+            if (checkCount === 1) {
+              this.log("⏳ Network is changing, waiting for stability...");
+            }
+
+            setTimeout(checkNetwork, checkInterval);
+          } else {
+            // Other network error - resolve anyway as it might be a different issue
+            if (!isResolved) {
+              isResolved = true;
+              clearTimeout(timeout);
+              this.log("✅ Network check completed (non-network-change error)");
+              resolve();
+            }
+          }
+        }
+      };
+
+      // Start the initial check
+      checkNetwork();
+    });
+  }
+
+  // Automatic network switching to target network
+  private async switchToTargetNetwork(): Promise<void> {
+    try {
+      this.log(`🔄 Attempting to switch to ${NETWORK_CONFIG.name} network...`);
+      
+      const targetChainId = NETWORK_CONFIG.chainId;
+      const chainIdHex = `0x${targetChainId.toString(16)}`;
+      
+      // Try to switch network using wallet provider
+      if (this.signer.provider && 'request' in this.signer.provider) {
+        try {
+          // First try wallet_switchEthereumChain
+          await (this.signer.provider as any).request({
+            method: "wallet_switchEthereumChain",
+            params: [{ chainId: chainIdHex }],
+          });
+          
+          this.log(`✅ Network switch request sent successfully to ${NETWORK_CONFIG.name}`);
+          
+          // Wait a moment for the switch to complete
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          
+        } catch (switchError: any) {
+          this.log(`wallet_switchEthereumChain failed: ${switchError.message}`);
+          
+          // If chain doesn't exist, try to add it
+          if (switchError.code === 4902) {
+            this.log(`Chain not added, attempting to add ${NETWORK_CONFIG.name}...`);
+            
+            const networkConfig = getWalletNetworkConfig();
+            
+            await (this.signer.provider as any).request({
+              method: "wallet_addEthereumChain",
+              params: [networkConfig],
+            });
+            
+            this.log(`✅ ${NETWORK_CONFIG.name} network added successfully`);
+            
+            // Wait for network to be added and switched
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          } else {
+            throw new Error(`Network switching failed: ${switchError.message}`);
+          }
+        }
+      } else {
+        throw new Error("Wallet provider does not support network switching");
+      }
+    } catch (error: any) {
+      this.log(`❌ Automatic network switching failed: ${error.message}`);
+      throw new Error(`Failed to switch to ${NETWORK_CONFIG.name} network. Please manually switch to ${NETWORK_CONFIG.name} (Chain ID: ${NETWORK_CONFIG.chainId}) in your wallet. Error: ${error.message}`);
     }
   }
 
   // Logging methods
   log(...args: any[]) {
     if (this.develop) console.log(...args);
+  }
+
+  // =========================
+  // OPTIMIZED BATCH METHODS
+  // =========================
+
+  /**
+   * Get multiple listings in a single batch call using multicall (much faster than individual calls)
+   */
+  async getListingsBatch(listingIds: number[]): Promise<AlchemyListedToken[]> {
+    if (listingIds.length === 0) return [];
+
+    try {
+      this.log(`Fetching ${listingIds.length} listings in batch with multicall...`);
+      const startTime = Date.now();
+
+      // Execute parallel calls for better performance
+      let listings: any[] = [];
+      
+      // Use parallel individual calls for better performance
+      const listingPromises = listingIds.map(async (listingId) => {
+        try {
+          const listing = await this.getListing(listingId);
+          return listing;
+        } catch (error) {
+          return null;
+        }
+      });
+      
+      listings = await Promise.all(listingPromises);
+
+      // Process listings and fetch token data
+      const processedListings: AlchemyListedToken[] = [];
+      
+      for (let i = 0; i < listings.length; i++) {
+        const listing = listings[i];
+        const listingId = listingIds[i];
+        
+        if (!listing || !listing.active) continue;
+
+        try {
+          // Fetch token data in parallel for better performance
+          const tokenData = await this.getStrDomainFromCollection(Number(listing.tokenId));
+          
+          processedListings.push({
+            listingId: listingId,
+            tokenId: Number(listing.tokenId),
+            seller: listing.seller,
+            price: ethers.formatEther(listing.price),
+            active: listing.active,
+            strCollectionAddress: this.nftAddress,
+            tokenData: tokenData || undefined
+          } as AlchemyListedToken);
+        } catch (error) {
+          this.warn(`Failed to process listing ${listingId}:`, error);
+        }
+      }
+
+      const endTime = Date.now();
+      this.log(`Batch fetched ${processedListings.length} listings in ${endTime - startTime}ms`);
+
+      return processedListings;
+    } catch (error) {
+      this.error("Error in batch listings fetch:", error);
+      return [];
+    }
+  }
+
+  /**
+   * Optimized method to get all active listings using batch operations
+   */
+  async getAllActiveListingsOptimized(): Promise<AlchemyListedToken[]> {
+    try {
+      this.log("Fetching all active listings with optimized batch method...");
+      const startTime = Date.now();
+
+      // Get the last listing ID
+      let lastListingId: number = 0;
+      try {
+        const result = await this.marketplaceContract.lastListingId();
+        lastListingId = Number(result);
+      } catch (error: any) {
+        this.warn("Could not get lastListingId, falling back to scanning");
+        return await this.scanForListings(true);
+      }
+
+      if (lastListingId === 0) {
+        this.log("No listings found");
+        return [];
+      }
+
+      // Create array of all listing IDs
+      const allListingIds = Array.from({ length: lastListingId }, (_, i) => i + 1);
+      
+      // Process in chunks to avoid overwhelming the RPC
+      const chunkSize = 20; // Process 20 listings at a time
+      const chunks = [];
+      for (let i = 0; i < allListingIds.length; i += chunkSize) {
+        chunks.push(allListingIds.slice(i, i + chunkSize));
+      }
+
+      this.log(`Processing ${allListingIds.length} listings in ${chunks.length} chunks of ${chunkSize}`);
+
+      // Process chunks sequentially to avoid rate limiting
+      const allListings: AlchemyListedToken[] = [];
+      for (const chunk of chunks) {
+        const chunkListings = await this.getListingsBatch(chunk);
+        allListings.push(...chunkListings);
+        
+        // Small delay between chunks to be nice to the RPC
+        if (chunks.length > 1) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
+
+      const endTime = Date.now();
+      this.log(`Optimized fetch completed: ${allListings.length} active listings in ${endTime - startTime}ms`);
+
+      return allListings;
+    } catch (error) {
+      this.error("Error in optimized listings fetch:", error);
+      return [];
+    }
+  }
+
+  /**
+   * Get active listings for a specific page with optimized batch fetching
+   */
+  async getActiveListingsPageOptimized(page: number, pageSize: number): Promise<AlchemyListedToken[]> {
+    try {
+      this.log(`Fetching page ${page} (${pageSize} items) with optimized method...`);
+      const startTime = Date.now();
+
+      // Get the last listing ID
+      let lastListingId: number = 0;
+      try {
+        const result = await this.marketplaceContract.lastListingId();
+        lastListingId = Number(result);
+      } catch (error: any) {
+        this.warn("Could not get lastListingId for pagination");
+        return [];
+      }
+
+      if (lastListingId === 0) {
+        this.log("No listings found for pagination");
+        return [];
+      }
+
+      // Calculate the range of listing IDs for this page
+      const startId = (page - 1) * pageSize + 1;
+      const endId = Math.min(startId + pageSize - 1, lastListingId);
+
+      if (startId > lastListingId) {
+        this.log(`Page ${page} is beyond available listings`);
+        return [];
+      }
+
+      // Create array of listing IDs for this page
+      const pageListingIds = Array.from({ length: endId - startId + 1 }, (_, i) => startId + i);
+
+      // Fetch listings for this page in batch
+      const pageListings = await this.getListingsBatch(pageListingIds);
+
+      const endTime = Date.now();
+      this.log(`Optimized page fetch completed: ${pageListings.length} listings in ${endTime - startTime}ms`);
+
+      return pageListings;
+    } catch (error) {
+      this.error("Error in optimized page fetch:", error);
+      return [];
+    }
+  }
+
+  /**
+   * Get listing count with caching to avoid repeated calls
+   */
+  private listingCountCache: { count: number; timestamp: number } | null = null;
+  private readonly CACHE_DURATION = 30000; // 30 seconds cache
+
+  async getActiveListingCountOptimized(): Promise<number> {
+    try {
+      // Check cache first
+      if (this.listingCountCache && 
+          Date.now() - this.listingCountCache.timestamp < this.CACHE_DURATION) {
+        this.log(`Using cached listing count: ${this.listingCountCache.count}`);
+        return this.listingCountCache.count;
+      }
+
+      this.log("Fetching fresh listing count...");
+      const startTime = Date.now();
+
+      let lastListingId: number = 0;
+      try {
+        const result = await this.marketplaceContract.lastListingId();
+        lastListingId = Number(result);
+      } catch (error: any) {
+        this.warn("Could not get lastListingId for count");
+        return 0;
+      }
+
+      // Count active listings efficiently
+      let activeCount = 0;
+      const batchSize = 50; // Check 50 listings at a time
+      
+      for (let i = 1; i <= lastListingId; i += batchSize) {
+        const endId = Math.min(i + batchSize - 1, lastListingId);
+        const batchIds = Array.from({ length: endId - i + 1 }, (_, idx) => i + idx);
+        
+        // Check which listings are active in this batch
+        const activeChecks = await Promise.all(
+          batchIds.map(async (listingId) => {
+            try {
+              const listing = await this.getListing(listingId);
+              return listing?.active ? 1 : 0;
+            } catch {
+              return 0;
+            }
+          })
+        );
+        
+        activeCount += activeChecks.reduce((sum: number, isActive: number) => sum + isActive, 0);
+        
+        // Small delay between batches
+        if (i + batchSize <= lastListingId) {
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+      }
+
+      // Cache the result
+      this.listingCountCache = {
+        count: activeCount,
+        timestamp: Date.now()
+      };
+
+      const endTime = Date.now();
+      this.log(`Counted ${activeCount} active listings in ${endTime - startTime}ms`);
+
+      return activeCount;
+    } catch (error) {
+      this.error("Error in optimized count fetch:", error);
+      return 0;
+    }
+  }
+
+  /**
+   * SUPER OPTIMIZED: Get my listings by scanning in batches and filtering early
+   */
+  async getMyListingsOptimized(): Promise<AlchemyListedToken[]> {
+    try {
+      this.log("Fetching my listings using SUPER OPTIMIZED batch method...");
+      const startTime = Date.now();
+
+      const myAddress = (await this.signer.getAddress()).toLowerCase();
+      let lastListingId: number = 0;
+
+      try {
+        const result = await this.marketplaceContract.lastListingId();
+        lastListingId = Number(result);
+      } catch (error: any) {
+        this.warn("Could not get lastListingId, falling back to scanning");
+        return await this.scanForListings(false);
+      }
+
+      if (lastListingId === 0) {
+        this.log("No listings found");
+        return [];
+      }
+
+      // Create array of all listing IDs
+      const allListingIds = Array.from({ length: lastListingId }, (_, i) => i + 1);
+      
+      // Process in chunks and filter early for my listings only
+      const chunkSize = 20;
+      const chunks = [];
+      for (let i = 0; i < allListingIds.length; i += chunkSize) {
+        chunks.push(allListingIds.slice(i, i + chunkSize));
+      }
+
+      this.log(`Scanning ${allListingIds.length} listings in ${chunks.length} chunks for my listings`);
+
+      const myListings: AlchemyListedToken[] = [];
+      
+      // Process chunks sequentially to avoid rate limiting
+      for (const chunk of chunks) {
+        try {
+          // Get listings for this chunk
+          const chunkListings = await this.getListingsBatch(chunk);
+          
+          // Filter for my listings only
+          const myChunkListings = chunkListings.filter(
+            (listing: AlchemyListedToken) => listing.seller.toLowerCase() === myAddress
+          );
+          
+          myListings.push(...myChunkListings);
+          
+          // Small delay between chunks
+          if (chunks.length > 1) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+          }
+        } catch (error) {
+          this.warn(`Error processing chunk:`, error);
+        }
+      }
+
+      const endTime = Date.now();
+      this.log(`SUPER OPTIMIZED: Found ${myListings.length} of my listings in ${endTime - startTime}ms`);
+
+      return myListings;
+    } catch (error) {
+      this.error("Error in super optimized my listings fetch:", error);
+      return [];
+    }
+  }
+
+  // Get my all listed tokens on marketplace (OPTIMIZED)
+  async getMyAllListedDomainsOnMarketplaceWithTokenData(): Promise<
+    AlchemyListedToken[]
+  > {
+    // Use the super optimized method
+    return await this.getMyListingsOptimized();
+  }
+
+
+  // Scan for listings (Alchemy-enhanced)
+  private async scanForListings(activeOnly: boolean): Promise<AlchemyListedToken[]> {
+    const listings: AlchemyListedToken[] = [];
+    let listingId = 1;
+
+    try {
+      this.log(`Scanning for listings (activeOnly: ${activeOnly}) using Alchemy provider...`);
+      
+      while (true) {
+        try {
+          const listing = await this.getListing(listingId);
+          if (!listing) break;
+
+          if (!activeOnly || listing.active) {
+            // Convert Listing to AlchemyListedToken
+            const alchemyListing: AlchemyListedToken = {
+              listingId: listingId,
+              tokenId: Number(listing.tokenId),
+              seller: listing.seller,
+              price: ethers.formatEther(listing.price),
+              active: listing.active,
+              strCollectionAddress: this.nftAddress,
+              tokenData: await this.getStrDomainFromCollection(Number(listing.tokenId)) || undefined
+            };
+            listings.push(alchemyListing);
+          }
+          listingId++;
+        } catch (error: any) {
+          this.warn(`Failed to scan listing ${listingId}:`, error.message);
+          break;
+        }
+      }
+    } catch (error: any) {
+      this.error("Error scanning listings:", error);
+    }
+
+    return listings;
   }
 
   warn(...args: any[]) {

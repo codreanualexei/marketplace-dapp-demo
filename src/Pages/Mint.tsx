@@ -5,7 +5,7 @@ import "./Mint.css";
 
 const Mint: React.FC = () => {
   const { account } = useWallet();
-  const sdk = useMarketplaceSDK();
+  const { sdk } = useMarketplaceSDK();
   const [isAdmin, setIsAdmin] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isMinting, setIsMinting] = useState(false);

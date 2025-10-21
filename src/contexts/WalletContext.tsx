@@ -8,6 +8,7 @@ import React, {
 } from "react";
 import { ethers } from "ethers";
 import { EthereumProvider } from "@walletconnect/ethereum-provider";
+import { NETWORK_CONFIG } from "../config/network";
 
 export type WalletType = "metamask" | "walletconnect";
 

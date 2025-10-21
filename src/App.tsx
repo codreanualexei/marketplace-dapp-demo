@@ -11,6 +11,7 @@ import Royalties from "./Pages/Royalties";
 import Mint from "./Pages/Mint";
 import Debug from "./Pages/Debug";
 import "./App.css";
+import "./Components/Alchemy.css";
 
 // Component that displays wallet errors
 const AppContent: React.FC<{
@@ -44,20 +45,25 @@ const AppContent: React.FC<{
     <div className="App">
       <Header currentPage={currentPage} onNavigate={setCurrentPage} />
       <NetworkChecker />
+      
+
       {renderPage()}
       <ErrorDisplay error={error} onDismiss={() => setError(null)} />
     </div>
   );
 };
 
-function App() {
+function AppAlchemy() {
   const [currentPage, setCurrentPage] = useState("home");
 
   return (
     <WalletProvider>
-      <AppContent currentPage={currentPage} setCurrentPage={setCurrentPage} />
+      <AppContent 
+        currentPage={currentPage} 
+        setCurrentPage={setCurrentPage}
+      />
     </WalletProvider>
   );
 }
 
-export default App;
+export default AppAlchemy;

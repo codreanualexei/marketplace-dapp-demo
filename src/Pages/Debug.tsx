@@ -6,7 +6,7 @@ import "./Debug.css";
 
 const Debug: React.FC = () => {
   const { account, chainId, provider } = useWallet();
-  const sdk = useMarketplaceSDK();
+  const { sdk } = useMarketplaceSDK();
   const [testResults, setTestResults] = useState<string[]>([]);
   const [isRunning, setIsRunning] = useState(false);
 

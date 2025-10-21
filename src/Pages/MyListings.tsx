@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useWallet } from "../contexts/WalletContext";
 import { useMarketplaceSDK } from "../hooks/useMarketplaceSDK";
 import { ListedToken } from "../sdk/MarketplaceSDK";
@@ -9,7 +9,7 @@ const ITEMS_PER_PAGE = 12;
 
 const MyListings: React.FC = () => {
   const { account } = useWallet();
-  const sdk = useMarketplaceSDK();
+  const { sdk } = useMarketplaceSDK();
   const [myListings, setMyListings] = useState<ListedToken[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -23,21 +23,22 @@ const MyListings: React.FC = () => {
   const [activeCurrentPage, setActiveCurrentPage] = useState(1);
   const [soldCurrentPage, setSoldCurrentPage] = useState(1);
 
-  useEffect(() => {
-    if (sdk && account) {
-      loadMyListings();
-    }
-  }, [sdk, account]);
-
-  const loadMyListings = async () => {
+  const loadMyListings = useCallback(async () => {
     if (!sdk) return;
 
     setIsLoading(true);
     setError(null);
 
     try {
+      console.log("Loading my listings using Alchemy-enhanced SDK...");
+      const startTime = Date.now();
+
       const listings =
         await sdk.getMyAllListedDomainsOnMarketplaceWithTokenData();
+      
+      const endTime = Date.now();
+      console.log(`Loaded ${listings.length} listings in ${endTime - startTime}ms`);
+
       setMyListings(listings);
     } catch (err: any) {
       console.error("Error loading listings:", err);
@@ -45,7 +46,13 @@ const MyListings: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [sdk]);
+
+  useEffect(() => {
+    if (sdk && account) {
+      loadMyListings();
+    }
+  }, [sdk, account, loadMyListings]);
 
   const handleUpdatePrice = (listingId: number, currentPrice: string) => {
     setUpdatingListingId(listingId);
@@ -105,14 +112,26 @@ const MyListings: React.FC = () => {
       const txHash = await sdk.cancelListing(listingId);
 
       if (txHash) {
-        alert(`Listing cancelled successfully! Transaction: ${txHash}`);
+        alert(`✅ Listing cancelled successfully! Transaction: ${txHash}`);
         await loadMyListings();
       } else {
-        alert("Failed to cancel listing. Please try again.");
+        alert("❌ Failed to cancel listing. Please try again.");
       }
     } catch (err: any) {
       console.error("Error cancelling listing:", err);
-      alert(`Error: ${err.message || "Failed to cancel listing"}`);
+      
+      // Simple error message - let user try again
+      let errorMessage = err.message || "Failed to cancel listing";
+      
+      if (errorMessage.includes("switch to") || errorMessage.includes("Chain ID:")) {
+        errorMessage += "\n\n💡 Please switch to the correct network in your wallet and try again.";
+      } else if (errorMessage.includes("user rejected")) {
+        errorMessage += "\n\n💡 Transaction was cancelled. You can try again if needed.";
+      } else {
+        errorMessage += "\n\n💡 Please try again. If the issue persists, check your network connection.";
+      }
+      
+      alert(errorMessage);
     } finally {
       setCancelingListingId(null);
     }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useWallet } from "../contexts/WalletContext";
 import { useMarketplaceSDK } from "../hooks/useMarketplaceSDK";
 import { SplitterBalance } from "../sdk/MarketplaceSDK";
@@ -7,7 +7,7 @@ import "./Royalties.css";
 
 const Royalties: React.FC = () => {
   const { account } = useWallet();
-  const sdk = useMarketplaceSDK();
+  const { sdk } = useMarketplaceSDK();
   const [splitterBalances, setSplitterBalances] = useState<SplitterBalance[]>(
     [],
   );
@@ -16,21 +16,19 @@ const Royalties: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [withdrawing, setWithdrawing] = useState<string | null>(null);
+  const [splitterCount, setSplitterCount] = useState<number>(0);
+  const [isScanningSplitters, setIsScanningSplitters] = useState(false);
 
-  useEffect(() => {
-    if (sdk && account) {
-      loadBalances();
-      checkAdmin();
-    }
-  }, [sdk, account]);
-
-  const loadBalances = async () => {
+  const loadBalances = useCallback(async () => {
     if (!sdk || !account) return;
 
     setIsLoading(true);
     setError(null);
 
     try {
+      console.log("Loading balances using OPTIMIZED Alchemy-enhanced SDK...");
+      const startTime = Date.now();
+
       // Load marketplace fees first (quick)
       try {
         const fees = await sdk.getMarketplaceFees();
@@ -42,12 +40,21 @@ const Royalties: React.FC = () => {
         setMarketplaceFees("0");
       }
 
-      // Skip splitter balances for now to avoid RPC rate limiting
-      // User can manually check if needed
-      console.log(
-        "Skipping automatic splitter balance check (can cause RPC errors)",
-      );
-      setSplitterBalances([]);
+      // Get splitter count for progress indication (uses cache if available)
+      try {
+        const count = await sdk.getSplitterCountOptimized();
+        setSplitterCount(count);
+        console.log(`Found ${count} splitter contracts in collection`);
+      } catch (countError) {
+        console.warn("Could not fetch splitter count:", countError);
+        setSplitterCount(0);
+      }
+
+      const endTime = Date.now();
+      console.log(`Loaded balances in ${endTime - startTime}ms`);
+      
+      // Note: Splitter balances are loaded on-demand to avoid initial RPC load
+      console.log("Splitter balances will be loaded on-demand when requested");
     } catch (err: any) {
       console.error("Error loading balances:", err);
       setSplitterBalances([]);
@@ -55,9 +62,9 @@ const Royalties: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [sdk, account]);
 
-  const checkAdmin = async () => {
+  const checkAdmin = useCallback(async () => {
     if (!sdk) return;
     try {
       const admin = await sdk.isAdmin();
@@ -65,7 +72,40 @@ const Royalties: React.FC = () => {
     } catch (err) {
       console.error("Error checking admin status:", err);
     }
-  };
+  }, [sdk]);
+
+  const loadSplitterBalances = useCallback(async () => {
+    if (!sdk || !account) return;
+
+    setIsScanningSplitters(true);
+    setError(null);
+
+    try {
+      console.log("Loading splitter balances using OPTIMIZED Alchemy-enhanced SDK...");
+      const startTime = Date.now();
+
+      const balances = await sdk.getSplitterBalanceOfWallet(account);
+      
+      const endTime = Date.now();
+      console.log(`OPTIMIZED: Loaded ${balances.length} splitter balances in ${endTime - startTime}ms`);
+
+      setSplitterBalances(balances || []);
+    } catch (err: any) {
+      console.error("Error loading splitter balances:", err);
+      setError("Failed to load splitter balances. Please try again.");
+      setSplitterBalances([]);
+    } finally {
+      setIsScanningSplitters(false);
+    }
+  }, [sdk, account]);
+
+  // Load initial data
+  useEffect(() => {
+    if (sdk && account) {
+      loadBalances();
+      checkAdmin();
+    }
+  }, [sdk, account, loadBalances, checkAdmin]);
 
   const handleWithdrawFromSplitter = async (splitterAddress: string) => {
     if (!sdk) return;
@@ -85,7 +125,7 @@ const Royalties: React.FC = () => {
         alert(
           `Withdrawal successful! Transaction: ${result.transactionHash}\nAmount: ${result.withdrawn} MATIC`,
         );
-        await loadBalances();
+        await loadSplitterBalances();
       } else {
         alert("Withdrawal failed. Please try again.");
       }
@@ -124,7 +164,7 @@ const Royalties: React.FC = () => {
         alert(
           `Successfully withdrew from ${results.length} splitter(s)!\nTotal: ${totalWithdrawn.toFixed(4)} MATIC`,
         );
-        await loadBalances();
+        await loadSplitterBalances();
       } else {
         alert("No funds to withdraw or withdrawal failed.");
       }
@@ -224,7 +264,14 @@ const Royalties: React.FC = () => {
             <div className="card-icon">📊</div>
             <div className="card-content">
               <span className="card-label">Splitter Contracts</span>
-              <span className="card-value">{splitterBalances.length}</span>
+              <span className="card-value">
+                {splitterBalances.length > 0 ? splitterBalances.length : splitterCount} 
+                {splitterCount > 0 && splitterBalances.length === 0 && (
+                  <small style={{ display: 'block', fontSize: '12px', color: '#666' }}>
+                    ({splitterCount} total)
+                  </small>
+                )}
+              </span>
             </div>
           </div>
 
@@ -247,25 +294,10 @@ const Royalties: React.FC = () => {
             <h2 className="section-title">Your Royalties (Creator/Minter)</h2>
             <button
               className="action-button secondary"
-              onClick={async () => {
-                if (!sdk || !account) return;
-                setIsLoading(true);
-                try {
-                  const balances =
-                    await sdk.getSplitterBalanceOfWallet(account);
-                  setSplitterBalances(balances || []);
-                } catch (err) {
-                  console.error("Error loading splitters:", err);
-                  alert(
-                    "Error loading royalties. The collection might be empty or RPC is rate limiting.",
-                  );
-                } finally {
-                  setIsLoading(false);
-                }
-              }}
-              disabled={isLoading}
+              onClick={loadSplitterBalances}
+              disabled={isScanningSplitters}
             >
-              {isLoading ? "Loading..." : "Check Royalty Balances"}
+              {isScanningSplitters ? "Scanning Splitters..." : "Check Royalty Balances"}
             </button>
             {splitterBalances.length > 0 && getTotalRoyalties() > 0 && (
               <button
@@ -281,11 +313,16 @@ const Royalties: React.FC = () => {
           {splitterBalances.length === 0 ? (
             <div className="empty-state">
               <h3>Click "Check Royalty Balances" to scan</h3>
-              <p>This will scan the collection for your royalty earnings</p>
+              <p>This will scan the collection for your royalty earnings using optimized batch processing</p>
+              {splitterCount > 0 && (
+                <p style={{ color: "#666", fontSize: "14px", marginTop: "8px" }}>
+                  Found {splitterCount} splitter contracts in the collection
+                </p>
+              )}
               <small
                 style={{ color: "#999", marginTop: "8px", display: "block" }}
               >
-                Note: May take time if collection is large
+                ⚡ Ultra-fast with optimized batch processing and caching
               </small>
             </div>
           ) : (
