@@ -493,7 +493,188 @@ export class MarketplaceSDK {
     }
   }
 
-  // List a token on the marketplace
+  // Check if a token is approved for marketplace
+  async isTokenApprovedForMarketplace(tokenId: number): Promise<boolean> {
+    try {
+      const userAddress = await this.signer.getAddress();
+      const currentApproval = await this.nftContract.getApproved(tokenId);
+      const isApprovedForAll = await this.nftContract.isApprovedForAll(userAddress, this.marketplaceAddress);
+      
+      return currentApproval.toLowerCase() === this.marketplaceAddress.toLowerCase() || isApprovedForAll;
+    } catch (error: any) {
+      this.error(`Error checking approval status for token ${tokenId}:`, error);
+      return false;
+    }
+  }
+
+  // List a token on the marketplace (assumes token is already approved)
+  async listTokenDirect(tokenId: number, price: string): Promise<string | null> {
+    try {
+      this.log(`Starting direct listing process for token ${tokenId} at price ${price} MATIC...`);
+      
+      // Check if user owns the token
+      const userAddress = await this.signer.getAddress();
+      const tokenOwner = await this.nftContract.ownerOf(tokenId);
+      this.log(`Token owner: ${tokenOwner}, User address: ${userAddress}`);
+      
+      if (tokenOwner.toLowerCase() !== userAddress.toLowerCase()) {
+        this.error(`User does not own token ${tokenId}. Owner: ${tokenOwner}, User: ${userAddress}`);
+        throw new Error("Failed to list domain. Make sure you own it and it's not already listed.");
+      }
+
+      // Verify token is approved
+      const isApproved = await this.isTokenApprovedForMarketplace(tokenId);
+      if (!isApproved) {
+        throw new Error("Token is not approved for marketplace. Please approve it first.");
+      }
+
+      // Now list the token
+      this.log("Creating listing transaction...");
+      
+      // Wait for network stability before sending listing transaction
+      await this.ensureCorrectNetwork();
+      
+      // Estimate gas for listing transaction with fallback
+      let listingGasEstimate;
+      try {
+        this.log("Attempting gas estimation for listing...");
+        listingGasEstimate = await this.marketplaceContractWrite.listToken.estimateGas(
+          this.nftAddress,
+          tokenId,
+          ethers.parseEther(price),
+        );
+        this.log(`Listing gas estimate successful: ${listingGasEstimate.toString()}`);
+      } catch (gasError: any) {
+        this.error("Listing gas estimation failed:", gasError);
+        if (gasError.message?.includes("network changed")) {
+          throw new Error("Network changed during gas estimation. Please try again.");
+        }
+        listingGasEstimate = BigInt(500000); // Default gas limit for listing
+        this.warn(`Using default gas limit for listing: ${listingGasEstimate.toString()}`);
+      }
+
+      // Add 20% buffer to gas estimate
+      const listingGasLimit = listingGasEstimate + (listingGasEstimate * BigInt(20)) / BigInt(100);
+      
+      this.log(`Sending listing transaction with gas limit: ${listingGasLimit.toString()}`);
+      
+      const tx = await this.marketplaceContractWrite.listToken(
+        this.nftAddress,
+        tokenId,
+        ethers.parseEther(price),
+        {
+          gasLimit: listingGasLimit,
+        }
+      );
+
+      this.log(`Listing transaction sent: ${tx.hash}`);
+      this.log("Waiting for listing confirmation...");
+      
+      // Wait for transaction with robust confirmation handling (same as buy function)
+      let receipt;
+      try {
+        receipt = await Promise.race([
+          tx.wait(2), // Wait for 2 confirmations
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error("Transaction timeout after 5 minutes")), 5 * 60 * 1000)
+          )
+        ]);
+      } catch (waitError: any) {
+        this.error("Error waiting for listing transaction confirmation:", waitError);
+        
+        // If waiting fails, try to get the transaction status directly
+        try {
+          this.log("Attempting to get listing transaction status directly...");
+          const txStatus = await this.signer.provider!.getTransactionReceipt(tx.hash);
+          if (txStatus) {
+            receipt = txStatus;
+            this.log("Got listing transaction receipt directly:", txStatus);
+          } else {
+            // Transaction might still be pending
+            this.log("Listing transaction is still pending, checking status...");
+            const txDetails = await this.signer.provider!.getTransaction(tx.hash);
+            if (txDetails && txDetails.blockNumber) {
+              // Transaction is confirmed, try to get receipt again
+              receipt = await this.signer.provider!.getTransactionReceipt(tx.hash);
+              this.log("Got listing receipt after confirmation:", receipt);
+            } else {
+              throw new Error("Listing transaction is still pending or failed");
+            }
+          }
+        } catch (directError: any) {
+          this.error("Could not get listing transaction status directly:", directError);
+          
+          // Final fallback: Check if the NFT is now held by marketplace (listing succeeded)
+          try {
+            this.log("Checking if NFT is now held by marketplace as fallback verification...");
+            const newOwner = await this.nftContract.ownerOf(tokenId);
+            
+            if (newOwner.toLowerCase() === this.marketplaceAddress.toLowerCase()) {
+              this.log("NFT ownership verification: Listing succeeded! Marketplace now holds the NFT.");
+              // Return the transaction hash even though we couldn't get the receipt
+              return tx.hash;
+            } else {
+              this.error(`NFT ownership verification failed. Expected: ${this.marketplaceAddress}, Got: ${newOwner}`);
+              throw new Error("Listing transaction confirmation failed and NFT ownership verification failed.");
+            }
+          } catch (ownershipError: any) {
+            this.error("NFT ownership verification error:", ownershipError);
+            throw new Error("Listing transaction confirmation failed. Please check your wallet or try again.");
+          }
+        }
+      }
+
+      if (!receipt) {
+        throw new Error("Listing transaction receipt not received");
+      }
+
+      this.log("Listing transaction receipt received:", receipt);
+
+      // Check if transaction was successful
+      if (receipt.status === 0) {
+        this.error("Listing transaction failed on blockchain");
+        this.error("Listing transaction receipt:", receipt);
+        
+        // Try to get more details about the failure
+        try {
+          const txDetails = await this.signer.provider!.getTransaction(tx.hash);
+          this.error("Listing transaction details:", txDetails);
+        } catch (txError) {
+          this.error("Could not get listing transaction details:", txError);
+        }
+        
+        throw new Error("Listing transaction failed on blockchain. Check the logs for details.");
+      }
+
+      this.log(`Listing successful! Transaction: ${receipt.hash}`);
+      this.log(`Gas used: ${receipt.gasUsed.toString()}`);
+      this.log(`Block number: ${receipt.blockNumber}`);
+      return receipt.hash;
+    } catch (error: any) {
+      this.error(`Error listing token ${tokenId}:`, error);
+      
+      // Provide more specific error messages
+      if (error.message?.includes("does not own")) {
+        throw new Error("Failed to list domain. Make sure you own it and it's not already listed.");
+      } else if (error.message?.includes("not approved")) {
+        throw new Error("Token is not approved for marketplace. Please approve it first.");
+      } else if (error.message?.includes("already listed")) {
+        throw new Error("This domain is already listed on the marketplace.");
+      } else if (error.message?.includes("network changed")) {
+        throw new Error("Network is switching. Please wait for the network change to complete and try again.");
+      } else if (error.message?.includes("switch to") || error.message?.includes("Chain ID:") || error.message?.includes("Failed to switch")) {
+        throw new Error(`🔗 Please switch to ${NETWORK_CONFIG.name} network before listing. The system attempted to switch automatically but failed. Please manually switch to ${NETWORK_CONFIG.name} (Chain ID: ${NETWORK_CONFIG.chainId}) in your wallet.`);
+      } else if (error.message?.includes("Internal JSON-RPC error") || error.code === "UNKNOWN_ERROR") {
+        throw new Error("Network error during listing. Please try again in a few moments.");
+      } else if (error.message?.includes("network")) {
+        throw new Error("Network error. Please check your connection and try again.");
+      } else {
+        throw new Error(`Failed to list domain: ${error.message || "Unknown error"}`);
+      }
+    }
+  }
+
+  // List a token on the marketplace (legacy method - handles approval automatically)
   async listToken(tokenId: number, price: string): Promise<string | null> {
     try {
       this.log(`Starting listing process for token ${tokenId} at price ${price} MATIC...`);

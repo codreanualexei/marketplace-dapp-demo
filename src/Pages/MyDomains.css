@@ -369,6 +369,28 @@
   color: #666;
 }
 
+.status {
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.status.checking {
+  background: #ffa726;
+  color: white;
+}
+
+.status.approved {
+  background: #38ef7d;
+  color: white;
+}
+
+.status.not-approved {
+  background: #ff4757;
+  color: white;
+}
+
 @media (max-width: 768px) {
   .my-domains {
     padding: 20px 16px;

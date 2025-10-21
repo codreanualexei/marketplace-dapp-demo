@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useWallet } from "../contexts/WalletContext";
 import { useMarketplaceSDK } from "../hooks/useMarketplaceSDK";
 import { FormattedToken } from "../sdk/MarketplaceSDK";
@@ -16,6 +16,15 @@ const MyDomains: React.FC = () => {
   const [listingTokenId, setListingTokenId] = useState<number | null>(null);
   const [listPrice, setListPrice] = useState<string>("");
   const [currentPage, setCurrentPage] = useState(1);
+  const [tokenApprovalStatus, setTokenApprovalStatus] = useState<Record<number, boolean>>({});
+  const [checkingApproval, setCheckingApproval] = useState<Record<number, boolean>>({});
+
+  // Load domains when component mounts and SDK is available
+  useEffect(() => {
+    if (sdk && account) {
+      loadMyDomains();
+    }
+  }, [sdk, account]);
 
   const loadMyDomains = async () => {
     if (!sdk) return;
@@ -33,11 +42,59 @@ const MyDomains: React.FC = () => {
       console.log(`Loaded ${domains.length} domains in ${endTime - startTime}ms`);
       
       setMyDomains(domains);
+      
+      // Check approval status for all domains
+      await checkApprovalStatusForAll(domains);
     } catch (err: any) {
       console.error("Error loading domains:", err);
       setError("Failed to load your domains");
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const checkApprovalStatusForAll = async (domains: FormattedToken[]) => {
+    if (!sdk) return;
+    
+    console.log(`Checking approval status for ${domains.length} domains...`);
+    
+    const approvalPromises = domains.map(async (domain) => {
+      try {
+        console.log(`Checking approval for token ${domain.tokenId}...`);
+        const isApproved = await sdk.isTokenApprovedForMarketplace(domain.tokenId);
+        console.log(`Token ${domain.tokenId} approval status:`, isApproved);
+        return { tokenId: domain.tokenId, isApproved };
+      } catch (error) {
+        console.error(`Error checking approval for token ${domain.tokenId}:`, error);
+        return { tokenId: domain.tokenId, isApproved: false };
+      }
+    });
+
+    const results = await Promise.all(approvalPromises);
+    const approvalMap: Record<number, boolean> = {};
+    results.forEach(({ tokenId, isApproved }) => {
+      approvalMap[tokenId] = isApproved;
+    });
+    
+    console.log('Final approval status map:', approvalMap);
+    setTokenApprovalStatus(approvalMap);
+  };
+
+  const checkApprovalStatus = async (tokenId: number) => {
+    if (!sdk) return;
+    
+    setCheckingApproval(prev => ({ ...prev, [tokenId]: true }));
+    
+    try {
+      const isApproved = await sdk.isTokenApprovedForMarketplace(tokenId);
+      setTokenApprovalStatus(prev => ({ ...prev, [tokenId]: isApproved }));
+      return isApproved;
+    } catch (error) {
+      console.error(`Error checking approval for token ${tokenId}:`, error);
+      setTokenApprovalStatus(prev => ({ ...prev, [tokenId]: false }));
+      return false;
+    } finally {
+      setCheckingApproval(prev => ({ ...prev, [tokenId]: false }));
     }
   };
 
@@ -49,6 +106,35 @@ const MyDomains: React.FC = () => {
   const handleCancelList = () => {
     setListingTokenId(null);
     setListPrice("");
+  };
+
+  const handleApproveToken = async (tokenId: number) => {
+    if (!sdk) return;
+
+    const confirmed = window.confirm(
+      `Approve Domain #${tokenId} for marketplace listing?`,
+    );
+
+    if (!confirmed) return;
+
+    setIsLoading(true);
+
+    try {
+      const txHash = await sdk.approveTokenForSale(tokenId);
+
+      if (txHash) {
+        alert(`Domain approved successfully! Transaction: ${txHash}`);
+        // Check approval status again
+        await checkApprovalStatus(tokenId);
+      } else {
+        alert("Failed to approve domain for marketplace.");
+      }
+    } catch (err: any) {
+      console.error("Error approving token:", err);
+      alert(`Error: ${err.message || "Failed to approve domain"}`);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleConfirmList = async (tokenId: number) => {
@@ -66,7 +152,7 @@ const MyDomains: React.FC = () => {
     setIsLoading(true);
 
     try {
-      const txHash = await sdk.listToken(tokenId, listPrice);
+      const txHash = await sdk.listTokenDirect(tokenId, listPrice);
 
       if (txHash) {
         alert(`Domain listed successfully! Transaction: ${txHash}`);
@@ -251,6 +337,17 @@ const MyDomains: React.FC = () => {
                           ).toLocaleDateString()}
                         </span>
                       </div>
+                      <div className="info-row">
+                        <span className="label">Status:</span>
+                        <span className={`value status ${checkingApproval[domain.tokenId] ? 'checking' : tokenApprovalStatus[domain.tokenId] ? 'approved' : 'not-approved'}`}>
+                          {checkingApproval[domain.tokenId] 
+                            ? "Checking..." 
+                            : tokenApprovalStatus[domain.tokenId] 
+                              ? "Approved for Sale" 
+                              : "Not Approved"
+                          }
+                        </span>
+                      </div>
                     </div>
 
                     {listingTokenId === domain.tokenId ? (
@@ -276,19 +373,33 @@ const MyDomains: React.FC = () => {
                             onClick={() => handleConfirmList(domain.tokenId)}
                             disabled={!listPrice || isLoading}
                           >
-                            {isLoading ? "Listing..." : "Confirm"}
+                            {isLoading ? "Listing..." : "List"}
                           </button>
                         </div>
                       </div>
                     ) : (
                       <div className="nft-card-footer">
-                        <button
-                          className="action-button primary"
-                          onClick={() => handleListClick(domain.tokenId)}
-                          disabled={isLoading}
-                        >
-                          List for Sale
-                        </button>
+                        {checkingApproval[domain.tokenId] ? (
+                          <button className="action-button secondary" disabled>
+                            Checking...
+                          </button>
+                        ) : tokenApprovalStatus[domain.tokenId] ? (
+                          <button
+                            className="action-button primary"
+                            onClick={() => handleListClick(domain.tokenId)}
+                            disabled={isLoading}
+                          >
+                            List for Sale
+                          </button>
+                        ) : (
+                          <button
+                            className="action-button secondary"
+                            onClick={() => handleApproveToken(domain.tokenId)}
+                            disabled={isLoading}
+                          >
+                            {isLoading ? "Approving..." : "Approve"}
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
