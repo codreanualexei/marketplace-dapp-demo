@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useWallet } from "../contexts/WalletContext";
 import { useMarketplaceSDK } from "../hooks/useMarketplaceSDK";
+import { useToast } from "../contexts/ToastContext";
 import { ListedToken } from "../sdk/MarketplaceSDK";
+import { NETWORK_CONFIG } from "../config/network";
 import Pagination from "../Components/Pagination";
 import "./MyListings.css";
 
@@ -10,6 +12,7 @@ const ITEMS_PER_PAGE = 12;
 const MyListings: React.FC = () => {
   const { account } = useWallet();
   const { sdk } = useMarketplaceSDK();
+  const { showSuccess, showError } = useToast();
   const [myListings, setMyListings] = useState<ListedToken[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -66,12 +69,12 @@ const MyListings: React.FC = () => {
 
   const handleConfirmUpdate = async (listingId: number) => {
     if (!sdk || !newPrice || parseFloat(newPrice) <= 0) {
-      alert("Please enter a valid price");
+      showError("Invalid Price", "Please enter a valid price");
       return;
     }
 
     const confirmed = window.confirm(
-      `Update listing #${listingId} to ${newPrice} MATIC?`,
+      `Update listing #${listingId} to ${newPrice} ${NETWORK_CONFIG.nativeCurrency.symbol}?`,
     );
 
     if (!confirmed) return;
@@ -82,16 +85,20 @@ const MyListings: React.FC = () => {
       const txHash = await sdk.updateListing(listingId, newPrice);
 
       if (txHash) {
-        alert(`Price updated successfully! Transaction: ${txHash}`);
+        showSuccess(
+          "Price Updated Successfully! ✅",
+          `Listing #${listingId} price updated to ${newPrice} ${NETWORK_CONFIG.nativeCurrency.symbol}`,
+          txHash
+        );
         setUpdatingListingId(null);
         setNewPrice("");
         await loadMyListings();
       } else {
-        alert("Failed to update price. Please try again.");
+        showError("Update Failed", "Failed to update price. Please try again.");
       }
     } catch (err: any) {
       console.error("Error updating listing:", err);
-      alert(`Error: ${err.message || "Failed to update price"}`);
+      showError("Update Error", err.message || "Failed to update price");
     } finally {
       setIsLoading(false);
     }
@@ -112,10 +119,14 @@ const MyListings: React.FC = () => {
       const txHash = await sdk.cancelListing(listingId);
 
       if (txHash) {
-        alert(`✅ Listing cancelled successfully! Transaction: ${txHash}`);
+        showSuccess(
+          "Listing Cancelled Successfully! ✅",
+          `Listing #${listingId} has been removed from the marketplace`,
+          txHash
+        );
         await loadMyListings();
       } else {
-        alert("❌ Failed to cancel listing. Please try again.");
+        showError("Cancel Failed", "Failed to cancel listing. Please try again.");
       }
     } catch (err: any) {
       console.error("Error cancelling listing:", err);
@@ -124,14 +135,14 @@ const MyListings: React.FC = () => {
       let errorMessage = err.message || "Failed to cancel listing";
       
       if (errorMessage.includes("switch to") || errorMessage.includes("Chain ID:")) {
-        errorMessage += "\n\n💡 Please switch to the correct network in your wallet and try again.";
+        errorMessage += " Please switch to the correct network in your wallet and try again.";
       } else if (errorMessage.includes("user rejected")) {
-        errorMessage += "\n\n💡 Transaction was cancelled. You can try again if needed.";
+        errorMessage += " Transaction was cancelled. You can try again if needed.";
       } else {
-        errorMessage += "\n\n💡 Please try again. If the issue persists, check your network connection.";
+        errorMessage += " Please try again. If the issue persists, check your network connection.";
       }
       
-      alert(errorMessage);
+      showError("Cancel Error", errorMessage);
     } finally {
       setCancelingListingId(null);
     }
@@ -269,7 +280,7 @@ const MyListings: React.FC = () => {
                           <div className="info-row">
                             <span className="label">Current Price:</span>
                             <span className="value price">
-                              {listing.price} MATIC
+                              {listing.price} {NETWORK_CONFIG.nativeCurrency.symbol}
                             </span>
                           </div>
                           <div className="info-row">
@@ -284,7 +295,7 @@ const MyListings: React.FC = () => {
                               type="number"
                               step="0.01"
                               min="0"
-                              placeholder="New price in MATIC"
+                              placeholder={`New price in ${NETWORK_CONFIG.nativeCurrency.symbol}`}
                               value={newPrice}
                               onChange={(e) => setNewPrice(e.target.value)}
                               className="price-input"
@@ -386,7 +397,7 @@ const MyListings: React.FC = () => {
                           <div className="info-row">
                             <span className="label">Last Price:</span>
                             <span className="value price">
-                              {listing.price} MATIC
+                              {listing.price} {NETWORK_CONFIG.nativeCurrency.symbol}
                             </span>
                           </div>
                           <div className="info-row">

@@ -3,6 +3,9 @@
  * All environment variables and constants
  */
 
+// Network Configuration - Import from dynamic network config
+import { NETWORK_CONFIG as DYNAMIC_NETWORK_CONFIG } from './network';
+
 // Contract Addresses
 export const MARKETPLACE_ADDRESS =
   process.env.REACT_APP_MARKETPLACE_ADDRESS ||
@@ -51,25 +54,17 @@ export const NFT_ROYALTY_TREASURY_BPS =
 export const ROYALTY_BPS =
   Number(process.env.REACT_APP_ROYALTY || process.env.ROYALTY) || 500; // 5%
 
-// Network Configuration
-export const SUPPORTED_CHAIN_ID =
-  Number(process.env.REACT_APP_CHAIN_ID || process.env.CHAIN_ID) || 80002; // Polygon Amoy
-export const RPC_URL =
-  process.env.REACT_APP_RPC_URL ||
-  process.env.AMOY_RPC_URL ||
-  "https://rpc-amoy.polygon.technology";
+export const SUPPORTED_CHAIN_ID = DYNAMIC_NETWORK_CONFIG.chainId;
+export const RPC_URL = DYNAMIC_NETWORK_CONFIG.rpcUrl;
 
+// Legacy NETWORK_CONFIG for backward compatibility
 export const NETWORK_CONFIG = {
-  chainId: SUPPORTED_CHAIN_ID,
-  chainIdHex: `0x${SUPPORTED_CHAIN_ID.toString(16)}`,
-  chainName: "Polygon Amoy Testnet",
-  nativeCurrency: {
-    name: "MATIC",
-    symbol: "MATIC",
-    decimals: 18,
-  },
-  rpcUrls: [RPC_URL],
-  blockExplorerUrls: ["https://amoy.polygonscan.com/"],
+  chainId: DYNAMIC_NETWORK_CONFIG.chainId,
+  chainIdHex: `0x${DYNAMIC_NETWORK_CONFIG.chainId.toString(16)}`,
+  chainName: DYNAMIC_NETWORK_CONFIG.name,
+  nativeCurrency: DYNAMIC_NETWORK_CONFIG.nativeCurrency,
+  rpcUrls: [DYNAMIC_NETWORK_CONFIG.rpcUrl],
+  blockExplorerUrls: [DYNAMIC_NETWORK_CONFIG.blockExplorerUrl],
 };
 
 // Application Settings
@@ -86,9 +81,27 @@ export const SUPPORTED_IMAGE_TYPES = [
   "image/webp",
 ];
 
-// Links
-export const BLOCK_EXPLORER_URL = "https://amoy.polygonscan.com";
-export const FAUCET_URL = "https://faucet.polygon.technology/";
+// Links - Dynamic based on network configuration
+export const BLOCK_EXPLORER_URL = DYNAMIC_NETWORK_CONFIG.blockExplorerUrl;
+export const FAUCET_URL = getFaucetUrl(DYNAMIC_NETWORK_CONFIG.chainId);
+
+// Helper function to get faucet URL based on chain ID
+function getFaucetUrl(chainId: number): string {
+  switch (chainId) {
+    case 80002: // Polygon Amoy
+      return "https://faucet.polygon.technology/";
+    case 80001: // Mumbai
+      return "https://faucet.polygon.technology/";
+    case 137: // Polygon Mainnet
+      return "https://wallet.polygon.technology/polygon/gas-swap/";
+    case 11155111: // Sepolia
+      return "https://sepoliafaucet.com/";
+    case 1: // Ethereum Mainnet
+      return "https://ethereum.org/en/developers/docs/networks/";
+    default:
+      return "https://faucet.polygon.technology/"; // Default to Polygon faucet
+  }
+}
 
 // Helper functions
 export const getExplorerTxUrl = (txHash: string): string => {

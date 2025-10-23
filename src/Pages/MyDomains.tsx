@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from "react";
 import { useWallet } from "../contexts/WalletContext";
+import { useToast } from "../contexts/ToastContext";
 import { useMarketplaceSDK } from "../hooks/useMarketplaceSDK";
 import { FormattedToken } from "../sdk/MarketplaceSDK";
+import { NETWORK_CONFIG } from "../config/network";
 import Pagination from "../Components/Pagination";
 import "./MyDomains.css";
 
@@ -9,6 +11,7 @@ const ITEMS_PER_PAGE = 12;
 
 const MyDomains: React.FC = () => {
   const { account } = useWallet();
+  const { showSuccess, showError } = useToast();
   const { sdk, isLoading: sdkLoading, error: sdkError } = useMarketplaceSDK();
   const [myDomains, setMyDomains] = useState<FormattedToken[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -123,15 +126,19 @@ const MyDomains: React.FC = () => {
       const txHash = await sdk.approveTokenForSale(tokenId);
 
       if (txHash) {
-        alert(`Domain approved successfully! Transaction: ${txHash}`);
+        showSuccess(
+          "Domain Approved! ✅",
+          `Domain #${tokenId} has been approved for marketplace listing.`,
+          txHash
+        );
         // Check approval status again
         await checkApprovalStatus(tokenId);
       } else {
-        alert("Failed to approve domain for marketplace.");
+        showError("Approval Failed", "Failed to approve domain for marketplace.");
       }
     } catch (err: any) {
       console.error("Error approving token:", err);
-      alert(`Error: ${err.message || "Failed to approve domain"}`);
+      showError("Approval Failed", err.message || "Failed to approve domain");
     } finally {
       setIsLoading(false);
     }
@@ -139,12 +146,12 @@ const MyDomains: React.FC = () => {
 
   const handleConfirmList = async (tokenId: number) => {
     if (!sdk || !listPrice || parseFloat(listPrice) <= 0) {
-      alert("Please enter a valid price");
+      showError("Invalid Price", "Please enter a valid price");
       return;
     }
 
     const confirmed = window.confirm(
-      `List Domain #${tokenId} for ${listPrice} MATIC?`,
+      `List Domain #${tokenId} for ${listPrice} ${NETWORK_CONFIG.nativeCurrency.symbol}?`,
     );
 
     if (!confirmed) return;
@@ -155,19 +162,24 @@ const MyDomains: React.FC = () => {
       const txHash = await sdk.listTokenDirect(tokenId, listPrice);
 
       if (txHash) {
-        alert(`Domain listed successfully! Transaction: ${txHash}`);
+        showSuccess(
+          "Domain Listed! 🚀",
+          `Domain #${tokenId} has been listed for ${listPrice} ${NETWORK_CONFIG.nativeCurrency.symbol}.`,
+          txHash
+        );
         setListingTokenId(null);
         setListPrice("");
         // Reload domains
         await loadMyDomains();
       } else {
-        alert(
-          "Failed to list domain. Make sure you own it and it's not already listed.",
+        showError(
+          "Listing Failed",
+          "Failed to list domain. Make sure you own it and it's not already listed."
         );
       }
     } catch (err: any) {
       console.error("Error listing token:", err);
-      alert(`Error: ${err.message || "Failed to list domain"}`);
+      showError("Listing Failed", err.message || "Failed to list domain");
     } finally {
       setIsLoading(false);
     }
@@ -325,7 +337,7 @@ const MyDomains: React.FC = () => {
                         <div className="info-row">
                           <span className="label">Last Price:</span>
                           <span className="value price">
-                            {(Number(domain.lastPrice) / 1e18).toFixed(4)} MATIC
+                            {(Number(domain.lastPrice) / 1e18).toFixed(4)} {NETWORK_CONFIG.nativeCurrency.symbol}
                           </span>
                         </div>
                       )}
@@ -356,7 +368,7 @@ const MyDomains: React.FC = () => {
                           type="number"
                           step="0.01"
                           min="0"
-                          placeholder="Price in MATIC"
+                          placeholder={`Price in ${NETWORK_CONFIG.nativeCurrency.symbol}`}
                           value={listPrice}
                           onChange={(e) => setListPrice(e.target.value)}
                           className="price-input"

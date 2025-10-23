@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useWallet } from "../contexts/WalletContext";
 import { useMarketplaceSDK } from "../hooks/useMarketplaceSDK";
+import { useToast } from "../contexts/ToastContext";
 import { SplitterBalance } from "../sdk/MarketplaceSDK";
 import { ethers } from "ethers";
 import "./Royalties.css";
@@ -8,6 +9,7 @@ import "./Royalties.css";
 const Royalties: React.FC = () => {
   const { account } = useWallet();
   const { sdk } = useMarketplaceSDK();
+  const { showSuccess, showError } = useToast();
   const [splitterBalances, setSplitterBalances] = useState<SplitterBalance[]>(
     [],
   );
@@ -122,16 +124,18 @@ const Royalties: React.FC = () => {
       const result = await sdk.withdrawRoyaltyFromSplitter(splitterAddress);
 
       if (result) {
-        alert(
-          `Withdrawal successful! Transaction: ${result.transactionHash}\nAmount: ${result.withdrawn} MATIC`,
+        showSuccess(
+          "Withdrawal Successful! ✅",
+          `Withdrawn ${result.withdrawn} MATIC from splitter`,
+          result.transactionHash
         );
         await loadSplitterBalances();
       } else {
-        alert("Withdrawal failed. Please try again.");
+        showError("Withdrawal Failed", "Withdrawal failed. Please try again.");
       }
     } catch (err: any) {
       console.error("Error withdrawing:", err);
-      alert(`Error: ${err.message || "Failed to withdraw"}`);
+      showError("Withdrawal Error", err.message || "Failed to withdraw");
     } finally {
       setWithdrawing(null);
     }
@@ -161,16 +165,18 @@ const Royalties: React.FC = () => {
           (sum, r) => sum + parseFloat(r.withdrawn),
           0,
         );
-        alert(
-          `Successfully withdrew from ${results.length} splitter(s)!\nTotal: ${totalWithdrawn.toFixed(4)} MATIC`,
+        showSuccess(
+          "Bulk Withdrawal Successful! ✅",
+          `Withdrawn from ${results.length} splitter(s). Total: ${totalWithdrawn.toFixed(4)} MATIC`,
+          results[0]?.transactionHash // Use first transaction hash for the link
         );
         await loadSplitterBalances();
       } else {
-        alert("No funds to withdraw or withdrawal failed.");
+        showError("No Funds", "No funds to withdraw or withdrawal failed.");
       }
     } catch (err: any) {
       console.error("Error withdrawing all:", err);
-      alert(`Error: ${err.message || "Failed to withdraw"}`);
+      showError("Bulk Withdrawal Error", err.message || "Failed to withdraw");
     } finally {
       setWithdrawing(null);
     }
@@ -191,18 +197,21 @@ const Royalties: React.FC = () => {
       const txHash = await sdk.withdrawMarketPlaceFees();
 
       if (txHash) {
-        alert(
-          `Marketplace fees withdrawn successfully! Transaction: ${txHash}`,
+        showSuccess(
+          "Marketplace Fees Withdrawn! ✅",
+          `Successfully withdrew marketplace fees`,
+          txHash
         );
         await loadBalances();
       } else {
-        alert(
-          "Withdrawal failed. Make sure you are an admin and there are fees to withdraw.",
+        showError(
+          "Withdrawal Failed", 
+          "Withdrawal failed. Make sure you are an admin and there are fees to withdraw."
         );
       }
     } catch (err: any) {
       console.error("Error withdrawing marketplace fees:", err);
-      alert(`Error: ${err.message || "Failed to withdraw marketplace fees"}`);
+      showError("Withdrawal Error", err.message || "Failed to withdraw marketplace fees");
     } finally {
       setWithdrawing(null);
     }

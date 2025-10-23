@@ -60,15 +60,15 @@ export class MarketplaceSDK {
     this.nftAddress = nftAddress;
 
     // Initialize Alchemy service first to get the provider
-    // Get chainId from the provider or use default
-    let chainId = 80002;
+    // Get chainId from the provider or use configured default
+    let chainId = NETWORK_CONFIG.chainId;
     try {
       // Try to get chainId from provider if available
       if (this.provider && 'network' in this.provider) {
-        chainId = Number((this.provider as any).network?.chainId) || 80002;
+        chainId = Number((this.provider as any).network?.chainId) || NETWORK_CONFIG.chainId;
       }
     } catch (error) {
-      console.warn('Could not get chainId from provider, using default:', error);
+      console.warn('Could not get chainId from provider, using configured default:', error);
     }
     this.alchemyService = new AlchemyService(
       alchemyApiKey,
@@ -212,31 +212,32 @@ export class MarketplaceSDK {
           data: gasError.data
         });
         
-        // If gas estimation fails, use a higher default gas limit
+        // If gas estimation fails, use a more generous default gas limit
         // The buy function involves multiple operations: royalty payment, seller payment, NFT transfer, sale recording
-        gasEstimate = BigInt(800000); // Increased default gas limit for complex buy operation
-        this.warn(`Using increased default gas limit: ${gasEstimate.toString()} due to estimation failure`);
+        // Use a higher default to ensure transaction success
+        gasEstimate = BigInt(1000000); // Increased default gas limit for complex buy operation
+        this.warn(`Using generous default gas limit: ${gasEstimate.toString()} due to estimation failure`);
+        this.warn("This is normal for complex transactions - the actual gas used will be much lower");
       }
 
-      // Add 20% buffer to gas estimate, but ensure minimum gas limit
-      let gasLimit = gasEstimate + (gasEstimate * BigInt(20)) / BigInt(100);
-      
-      // Ensure minimum gas limit for complex buy operation
-      const minimumGasLimit = BigInt(1000000); // 1M gas minimum
-      if (gasLimit < minimumGasLimit) {
-        gasLimit = minimumGasLimit;
-        this.warn(`Using minimum gas limit: ${gasLimit.toString()}`);
-      }
+      // Calculate optimal gas settings
+      const gasSettings = await this.calculateOptimalGasSettings(gasEstimate, 'buy');
 
-      this.log(`Buying token for ${ethers.formatEther(price)} MATIC with gas limit ${gasLimit.toString()}...`);
+      this.log(`Buying token for ${ethers.formatEther(price)} MATIC with gas limit ${gasSettings.gasLimit.toString()}...`);
       this.log(`Contract address: ${this.marketplaceAddress}`);
       this.log(`Sending transaction using wallet provider: ${this.signer.provider?.constructor.name}`);
+      this.log(`Gas settings:`, {
+        gasLimit: gasSettings.gasLimit.toString(),
+        gasPrice: gasSettings.gasPrice?.toString(),
+        maxFeePerGas: gasSettings.maxFeePerGas?.toString(),
+        maxPriorityFeePerGas: gasSettings.maxPriorityFeePerGas?.toString()
+      });
       
-      // Send transaction with explicit gas settings using wallet provider (for signing)
+      // Send transaction with optimal gas settings using wallet provider (for signing)
       // The contract requires exact amount: require(msg.value == L.price, "bad value");
       const tx = await this.marketplaceContractWrite.buy(listingId, {
         value: price, // Exact amount required by contract
-        gasLimit: gasLimit,
+        ...gasSettings, // Spread gas settings (gasLimit, maxFeePerGas, maxPriorityFeePerGas)
       });
 
       this.log(`Transaction sent: ${tx.hash}`);
@@ -400,16 +401,16 @@ export class MarketplaceSDK {
         this.warn(`Using default gas limit for update: ${gasEstimate.toString()}`);
       }
 
-      // Add 20% buffer to gas estimate
-      const gasLimit = gasEstimate + (gasEstimate * BigInt(20)) / BigInt(100);
+      // Calculate optimal gas settings
+      const gasSettings = await this.calculateOptimalGasSettings(gasEstimate, 'update');
       
-      this.log(`Sending update transaction with gas limit: ${gasLimit.toString()}`);
+      this.log(`Sending update transaction with gas limit: ${gasSettings.gasLimit.toString()}`);
       
       const tx = await this.marketplaceContractWrite.updateListing(
         listingId,
         ethers.parseEther(newPrice),
         {
-          gasLimit: gasLimit,
+          ...gasSettings, // Spread gas settings (gasLimit, maxFeePerGas, maxPriorityFeePerGas)
         }
       );
       
@@ -553,17 +554,17 @@ export class MarketplaceSDK {
         this.warn(`Using default gas limit for listing: ${listingGasEstimate.toString()}`);
       }
 
-      // Add 20% buffer to gas estimate
-      const listingGasLimit = listingGasEstimate + (listingGasEstimate * BigInt(20)) / BigInt(100);
+      // Calculate optimal gas settings
+      const gasSettings = await this.calculateOptimalGasSettings(listingGasEstimate, 'list');
       
-      this.log(`Sending listing transaction with gas limit: ${listingGasLimit.toString()}`);
+      this.log(`Sending listing transaction with gas limit: ${gasSettings.gasLimit.toString()}`);
       
       const tx = await this.marketplaceContractWrite.listToken(
         this.nftAddress,
         tokenId,
         ethers.parseEther(price),
         {
-          gasLimit: listingGasLimit,
+          ...gasSettings, // Spread gas settings (gasLimit, maxFeePerGas, maxPriorityFeePerGas)
         }
       );
 
@@ -749,17 +750,17 @@ export class MarketplaceSDK {
         this.warn(`Using default gas limit for listing: ${listingGasEstimate.toString()}`);
       }
 
-      // Add 20% buffer to gas estimate
-      const listingGasLimit = listingGasEstimate + (listingGasEstimate * BigInt(20)) / BigInt(100);
+      // Calculate optimal gas settings
+      const gasSettings = await this.calculateOptimalGasSettings(listingGasEstimate, 'list');
       
-      this.log(`Sending listing transaction with gas limit: ${listingGasLimit.toString()}`);
+      this.log(`Sending listing transaction with gas limit: ${gasSettings.gasLimit.toString()}`);
       
       const tx = await this.marketplaceContractWrite.listToken(
         this.nftAddress,
         tokenId,
         ethers.parseEther(price),
         {
-          gasLimit: listingGasLimit,
+          ...gasSettings, // Spread gas settings (gasLimit, maxFeePerGas, maxPriorityFeePerGas)
         }
       );
 
@@ -907,14 +908,14 @@ export class MarketplaceSDK {
         this.warn(`Using default gas limit for cancellation: ${gasEstimate.toString()}`);
       }
 
-      // Add 20% buffer to gas estimate
-      const gasLimit = gasEstimate + (gasEstimate * BigInt(20)) / BigInt(100);
+      // Calculate optimal gas settings
+      const gasSettings = await this.calculateOptimalGasSettings(gasEstimate, 'cancel');
       
-      this.log(`Sending cancellation transaction with gas limit: ${gasLimit.toString()}`);
+      this.log(`Sending cancellation transaction with gas limit: ${gasSettings.gasLimit.toString()}`);
       
       // Send transaction - simple approach, let user retry if it fails
       const tx = await this.marketplaceContractWrite.cancelListing(listingId, {
-        gasLimit: gasLimit,
+        ...gasSettings, // Spread gas settings (gasLimit, maxFeePerGas, maxPriorityFeePerGas)
       });
       
       this.log(`Cancellation transaction sent: ${tx.hash}`);
@@ -964,20 +965,72 @@ export class MarketplaceSDK {
   // Get tokenData from collection (enhanced with Alchemy)
   async getTokenData(tokenId: number): Promise<any> {
     try {
-      // Try Alchemy first for better performance
-      const alchemyMetadata = await this.alchemyService.getTokenMetadata(tokenId);
-      if (alchemyMetadata) {
-        // Combine Alchemy data with contract data
-        const contractData = await this.nftContract.getTokenData(tokenId);
-        return {
-          ...contractData,
-          metadata: alchemyMetadata
-        };
+      // Check cache first
+      const cached = this.tokenDataCache.get(tokenId);
+      if (cached && Date.now() - cached.timestamp < this.TOKEN_DATA_CACHE_DURATION) {
+        this.log(`Using cached token data for token ${tokenId}`);
+        return cached.data;
+      }
+
+      this.log(`Fetching fresh token data for token ${tokenId}...`);
+      
+      // Get contract data first
+      const contractData = await this.nftContract.getTokenData(tokenId);
+      
+      // Format contract data into proper object structure
+      const formattedData = {
+        creator: contractData[0],
+        mintTimestamp: Number(contractData[1]),
+        uri: contractData[2],
+        lastPrice: contractData[3].toString(),
+        lastPriceTimestamp: contractData[4].toString(),
+        tokenId: tokenId
+      };
+      
+      // Try to get Alchemy metadata for enhanced data
+      try {
+        const alchemyMetadata = await this.alchemyService.getTokenMetadata(tokenId);
+        if (alchemyMetadata) {
+          // Debug: Log the Alchemy metadata structure
+          this.log(`Alchemy metadata for token ${tokenId}:`, alchemyMetadata);
+          this.log(`Image object:`, alchemyMetadata.image);
+          this.log(`Raw metadata:`, alchemyMetadata.raw);
+          
+          // Extract image from Alchemy metadata
+          const imageUrl = alchemyMetadata.image?.cachedUrl || 
+                          alchemyMetadata.image?.originalUrl || 
+                          alchemyMetadata.image?.pngUrl ||
+                          alchemyMetadata.image?.url ||
+                          alchemyMetadata.raw?.image;
+          
+          this.log(`Extracted image URL for token ${tokenId}:`, imageUrl);
+          
+          const enhancedData = {
+            ...formattedData,
+            image: imageUrl, // Add image field to the main object
+            metadata: alchemyMetadata
+          };
+          
+          // Cache the enhanced data
+          this.tokenDataCache.set(tokenId, {
+            data: enhancedData,
+            timestamp: Date.now()
+          });
+          
+          return enhancedData;
+        }
+      } catch (alchemyError) {
+        // Alchemy metadata is optional, continue with contract data
+        this.log(`Alchemy metadata not available for token ${tokenId}, using contract data only`);
       }
       
-      // Fallback to contract only
-      const data = await this.nftContract.getTokenData(tokenId);
-      return data;
+      // Cache the contract data
+      this.tokenDataCache.set(tokenId, {
+        data: formattedData,
+        timestamp: Date.now()
+      });
+      
+      return formattedData;
     } catch (error: any) {
       this.error("Getting token:", error);
       return null;
@@ -1358,16 +1411,16 @@ export class MarketplaceSDK {
         this.warn(`Using default gas limit for approval: ${gasEstimate.toString()}`);
       }
 
-      // Add 20% buffer to gas estimate
-      const gasLimit = gasEstimate + (gasEstimate * BigInt(20)) / BigInt(100);
+      // Calculate optimal gas settings
+      const gasSettings = await this.calculateOptimalGasSettings(gasEstimate, 'approve');
       
-      this.log(`Sending approval transaction with gas limit: ${gasLimit.toString()}`);
+      this.log(`Sending approval transaction with gas limit: ${gasSettings.gasLimit.toString()}`);
       
       const tx = await this.nftContractWrite.approve(
         this.marketplaceAddress,
         tokenId,
         {
-          gasLimit: gasLimit,
+          ...gasSettings, // Spread gas settings (gasLimit, maxFeePerGas, maxPriorityFeePerGas)
         }
       );
       
@@ -1807,13 +1860,13 @@ export class MarketplaceSDK {
         this.warn(`Using default gas limit for withdrawal: ${gasEstimate.toString()}`);
       }
 
-      // Add 20% buffer to gas estimate
-      const gasLimit = gasEstimate + (gasEstimate * BigInt(20)) / BigInt(100);
+      // Calculate optimal gas settings
+      const gasSettings = await this.calculateOptimalGasSettings(gasEstimate, 'withdraw');
       
-      this.log(`Sending withdrawal transaction with gas limit: ${gasLimit.toString()}`);
+      this.log(`Sending withdrawal transaction with gas limit: ${gasSettings.gasLimit.toString()}`);
       
       const tx = await contract.withdraw({
-        gasLimit: gasLimit,
+        ...gasSettings, // Spread gas settings (gasLimit, maxFeePerGas, maxPriorityFeePerGas)
       });
       
       if (!tx || !tx.hash) {
@@ -1963,13 +2016,13 @@ export class MarketplaceSDK {
         this.warn(`Using default gas limit for fee withdrawal: ${gasEstimate.toString()}`);
       }
 
-      // Add 20% buffer to gas estimate
-      const gasLimit = gasEstimate + (gasEstimate * BigInt(20)) / BigInt(100);
+      // Calculate optimal gas settings
+      const gasSettings = await this.calculateOptimalGasSettings(gasEstimate, 'withdraw');
       
-      this.log(`Sending fee withdrawal transaction with gas limit: ${gasLimit.toString()}`);
+      this.log(`Sending fee withdrawal transaction with gas limit: ${gasSettings.gasLimit.toString()}`);
       
       const tx = await this.marketplaceContractWrite.withdrawFees({
-        gasLimit: gasLimit,
+        ...gasSettings, // Spread gas settings (gasLimit, maxFeePerGas, maxPriorityFeePerGas)
       });
       
       this.log(`Fee withdrawal transaction sent: ${tx.hash}`);
@@ -2091,13 +2144,13 @@ export class MarketplaceSDK {
         this.warn(`Using default gas limit for minting: ${gasEstimate.toString()}`);
       }
 
-      // Add 20% buffer to gas estimate
-      const gasLimit = gasEstimate + (gasEstimate * BigInt(20)) / BigInt(100);
+      // Calculate optimal gas settings
+      const gasSettings = await this.calculateOptimalGasSettings(gasEstimate, 'mint');
       
-      this.log(`Sending minting transaction with gas limit: ${gasLimit.toString()}`);
+      this.log(`Sending minting transaction with gas limit: ${gasSettings.gasLimit.toString()}`);
       
       const tx = await this.nftContractWrite.mint(originalCreator, URI, {
-        gasLimit: gasLimit,
+        ...gasSettings, // Spread gas settings (gasLimit, maxFeePerGas, maxPriorityFeePerGas)
       });
       
       this.log(`Minting transaction sent: ${tx.hash}`);
@@ -2520,38 +2573,37 @@ export class MarketplaceSDK {
       this.log(`Fetching page ${page} (${pageSize} items) with optimized method...`);
       const startTime = Date.now();
 
-      // Get the last listing ID
-      let lastListingId: number = 0;
-      try {
-        const result = await this.marketplaceContract.lastListingId();
-        lastListingId = Number(result);
-      } catch (error: any) {
-        this.warn("Could not get lastListingId for pagination");
+      // Get all active listings first, then paginate (with caching)
+      let allActiveListings: AlchemyListedToken[];
+      
+      // Check cache first
+      if (this.activeListingsCache && 
+          Date.now() - this.activeListingsCache.timestamp < this.CACHE_DURATION) {
+        this.log(`Using cached active listings: ${this.activeListingsCache.listings.length} listings`);
+        allActiveListings = this.activeListingsCache.listings;
+      } else {
+        this.log("Fetching fresh active listings...");
+        allActiveListings = await this.getAllActiveListingsOptimized();
+        // Cache the results
+        this.activeListingsCache = {
+          listings: allActiveListings,
+          timestamp: Date.now()
+        };
+      }
+      
+      if (allActiveListings.length === 0) {
+        this.log("No active listings found");
         return [];
       }
 
-      if (lastListingId === 0) {
-        this.log("No listings found for pagination");
-        return [];
-      }
-
-      // Calculate the range of listing IDs for this page
-      const startId = (page - 1) * pageSize + 1;
-      const endId = Math.min(startId + pageSize - 1, lastListingId);
-
-      if (startId > lastListingId) {
-        this.log(`Page ${page} is beyond available listings`);
-        return [];
-      }
-
-      // Create array of listing IDs for this page
-      const pageListingIds = Array.from({ length: endId - startId + 1 }, (_, i) => startId + i);
-
-      // Fetch listings for this page in batch
-      const pageListings = await this.getListingsBatch(pageListingIds);
+      // Calculate pagination on active listings
+      const startIndex = (page - 1) * pageSize;
+      const endIndex = startIndex + pageSize;
+      const pageListings = allActiveListings.slice(startIndex, endIndex);
 
       const endTime = Date.now();
       this.log(`Optimized page fetch completed: ${pageListings.length} listings in ${endTime - startTime}ms`);
+      this.log(`Page ${page}: showing listings ${startIndex + 1}-${Math.min(endIndex, allActiveListings.length)} of ${allActiveListings.length} total active listings`);
 
       return pageListings;
     } catch (error) {
@@ -2564,7 +2616,154 @@ export class MarketplaceSDK {
    * Get listing count with caching to avoid repeated calls
    */
   private listingCountCache: { count: number; timestamp: number } | null = null;
+  private activeListingsCache: { listings: AlchemyListedToken[]; timestamp: number } | null = null;
+  private tokenDataCache: Map<number, { data: any; timestamp: number }> = new Map();
   private readonly CACHE_DURATION = 30000; // 30 seconds cache
+  private readonly TOKEN_DATA_CACHE_DURATION = 300000; // 5 minutes cache for token data
+
+  /**
+   * Clear all caches to force fresh data on next request
+   */
+  clearCaches(): void {
+    this.listingCountCache = null;
+    this.activeListingsCache = null;
+    this.tokenDataCache.clear();
+    this.cachedActiveListingCount = undefined;
+    this.log("All caches cleared - next requests will fetch fresh data");
+  }
+
+  /**
+   * Get cache statistics for monitoring
+   */
+  getCacheStats(): {
+    listingCountCache: boolean;
+    activeListingsCache: boolean;
+    tokenDataCacheSize: number;
+    tokenDataCacheEntries: number[];
+  } {
+    const tokenDataEntries = Array.from(this.tokenDataCache.keys());
+    return {
+      listingCountCache: this.listingCountCache !== null,
+      activeListingsCache: this.activeListingsCache !== null,
+      tokenDataCacheSize: this.tokenDataCache.size,
+      tokenDataCacheEntries: tokenDataEntries
+    };
+  }
+
+  /**
+   * Get current network gas prices for transparency
+   */
+  async getCurrentGasPrices(): Promise<{
+    gasPrice?: bigint;
+    maxFeePerGas?: bigint;
+    maxPriorityFeePerGas?: bigint;
+    network: string;
+    supportsEIP1559: boolean;
+  }> {
+    try {
+      const feeData = await this.provider.getFeeData();
+      const network = await this.provider.getNetwork();
+      
+      const supportsEIP1559 = !!(feeData.maxFeePerGas && feeData.maxPriorityFeePerGas);
+      
+      return {
+        gasPrice: feeData.gasPrice || undefined,
+        maxFeePerGas: feeData.maxFeePerGas || undefined,
+        maxPriorityFeePerGas: feeData.maxPriorityFeePerGas || undefined,
+        network: network.name || `Chain ID ${network.chainId}`,
+        supportsEIP1559
+      };
+    } catch (error) {
+      this.error("Error getting gas prices:", error);
+      return {
+        network: "Unknown",
+        supportsEIP1559: false
+      };
+    }
+  }
+
+  /**
+   * Calculate optimal gas settings for transactions with robust fallbacks
+   */
+  private async calculateOptimalGasSettings(estimatedGas: bigint, operation: string): Promise<{ gasLimit: bigint; maxFeePerGas?: bigint; maxPriorityFeePerGas?: bigint; gasPrice?: bigint }> {
+    try {
+      // Add 20% buffer to gas estimate for safety
+      let gasLimit = estimatedGas + (estimatedGas * BigInt(20)) / BigInt(100);
+      
+      // Set more generous limits based on operation type and network conditions
+      const limits = {
+        buy: { min: BigInt(100000), max: BigInt(1000000) }, // Increased max for complex buy operations
+        list: { min: BigInt(200000), max: BigInt(800000) }, // Increased max for listing
+        approve: { min: BigInt(50000), max: BigInt(300000) }, // Increased max for approvals
+        update: { min: BigInt(100000), max: BigInt(500000) }, // Increased max for updates
+        cancel: { min: BigInt(100000), max: BigInt(500000) }, // Increased max for cancellations
+        withdraw: { min: BigInt(100000), max: BigInt(500000) }, // Increased max for withdrawals
+        mint: { min: BigInt(150000), max: BigInt(600000) } // Increased max for minting
+      };
+      
+      const operationLimits = limits[operation as keyof typeof limits] || limits.buy;
+      
+      // Apply limits with more intelligent logic
+      if (gasLimit < operationLimits.min) {
+        gasLimit = operationLimits.min;
+        this.log(`Using minimum gas limit for ${operation}: ${gasLimit.toString()}`);
+      } else if (gasLimit > operationLimits.max) {
+        // If we exceed the max, check if it's a reasonable amount
+        const reasonableMax = operationLimits.max * BigInt(2); // Allow up to 2x the max for complex operations
+        if (gasLimit <= reasonableMax) {
+          this.log(`Using higher gas limit for complex ${operation} operation: ${gasLimit.toString()} (exceeds normal max of ${operationLimits.max.toString()})`);
+        } else {
+          gasLimit = operationLimits.max;
+          this.log(`Capping gas limit for ${operation} at maximum: ${gasLimit.toString()}`);
+        }
+      }
+      
+      // Try to get current gas price for EIP-1559 transactions with robust fallback
+      let gasSettings: { gasLimit: bigint; maxFeePerGas?: bigint; maxPriorityFeePerGas?: bigint; gasPrice?: bigint } = { gasLimit };
+      
+      try {
+        const feeData = await this.provider.getFeeData();
+        
+        // For certain testnets, prefer legacy gas pricing to avoid MetaMask issues
+        const network = await this.provider.getNetwork();
+        const isConfiguredTestnet = network.chainId === BigInt(NETWORK_CONFIG.chainId);
+        
+        if (isConfiguredTestnet) {
+          this.log(`${NETWORK_CONFIG.name} detected - using legacy gas pricing to avoid MetaMask compatibility issues`);
+          if (feeData.gasPrice) {
+            gasSettings.gasPrice = feeData.gasPrice + (feeData.gasPrice * BigInt(15)) / BigInt(100);
+            this.log(`Using legacy gas pricing for ${NETWORK_CONFIG.name}: gasPrice=${gasSettings.gasPrice}`);
+          } else {
+            this.log(`No gas price available for ${NETWORK_CONFIG.name}, using gas limit only`);
+          }
+        } else if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
+          // Add 15% buffer to gas prices for faster confirmation
+          gasSettings.maxFeePerGas = feeData.maxFeePerGas + (feeData.maxFeePerGas * BigInt(15)) / BigInt(100);
+          gasSettings.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas + (feeData.maxPriorityFeePerGas * BigInt(15)) / BigInt(100);
+          this.log(`Using EIP-1559 gas pricing: maxFee=${gasSettings.maxFeePerGas}, priorityFee=${gasSettings.maxPriorityFeePerGas}`);
+        } else if (feeData.gasPrice) {
+          // Fallback to legacy gas pricing
+          gasSettings.gasPrice = feeData.gasPrice + (feeData.gasPrice * BigInt(15)) / BigInt(100);
+          this.log(`Using legacy gas pricing: gasPrice=${gasSettings.gasPrice}`);
+        } else {
+          this.log("No gas price data available, using gas limit only");
+        }
+      } catch (feeError) {
+        this.log("Could not get fee data, using gas limit only");
+        this.log("Fee data error:", feeError);
+        // Ensure we don't use EIP-1559 parameters when fee data fails
+        gasSettings.maxFeePerGas = undefined;
+        gasSettings.maxPriorityFeePerGas = undefined;
+        gasSettings.gasPrice = undefined;
+      }
+      
+      return gasSettings;
+    } catch (error) {
+      this.error("Error calculating optimal gas settings:", error);
+      // Fallback to simple gas limit with generous buffer
+      return { gasLimit: estimatedGas + (estimatedGas * BigInt(30)) / BigInt(100) }; // Increased buffer to 30%
+    }
+  }
 
   async getActiveListingCountOptimized(): Promise<number> {
     try {
@@ -2587,42 +2786,32 @@ export class MarketplaceSDK {
         return 0;
       }
 
-      // Count active listings efficiently
-      let activeCount = 0;
-      const batchSize = 50; // Check 50 listings at a time
+      // Use the same cache as the page method for consistency
+      let allActiveListings: AlchemyListedToken[];
       
-      for (let i = 1; i <= lastListingId; i += batchSize) {
-        const endId = Math.min(i + batchSize - 1, lastListingId);
-        const batchIds = Array.from({ length: endId - i + 1 }, (_, idx) => i + idx);
-        
-        // Check which listings are active in this batch
-        const activeChecks = await Promise.all(
-          batchIds.map(async (listingId) => {
-            try {
-              const listing = await this.getListing(listingId);
-              return listing?.active ? 1 : 0;
-            } catch {
-              return 0;
-            }
-          })
-        );
-        
-        activeCount += activeChecks.reduce((sum: number, isActive: number) => sum + isActive, 0);
-        
-        // Small delay between batches
-        if (i + batchSize <= lastListingId) {
-          await new Promise(resolve => setTimeout(resolve, 50));
-        }
+      if (this.activeListingsCache && 
+          Date.now() - this.activeListingsCache.timestamp < this.CACHE_DURATION) {
+        this.log(`Using cached active listings for count: ${this.activeListingsCache.listings.length} listings`);
+        allActiveListings = this.activeListingsCache.listings;
+      } else {
+        this.log("Fetching fresh active listings for count...");
+        allActiveListings = await this.getAllActiveListingsOptimized();
+        // Cache the results
+        this.activeListingsCache = {
+          listings: allActiveListings,
+          timestamp: Date.now()
+        };
       }
+
+      const activeCount = allActiveListings.length;
+      const endTime = Date.now();
+      this.log(`Counted ${activeCount} active listings in ${endTime - startTime}ms`);
 
       // Cache the result
       this.listingCountCache = {
         count: activeCount,
         timestamp: Date.now()
       };
-
-      const endTime = Date.now();
-      this.log(`Counted ${activeCount} active listings in ${endTime - startTime}ms`);
 
       return activeCount;
     } catch (error) {

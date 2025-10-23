@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { WalletProvider, useWallet } from "./contexts/WalletContext";
+import { ToastProvider } from "./contexts/ToastContext";
 import Header from "./Components/Header";
 import NetworkChecker from "./Components/NetworkChecker";
 import ErrorDisplay from "./Components/ErrorDisplay";
@@ -58,10 +59,12 @@ function AppAlchemy() {
 
   return (
     <WalletProvider>
-      <AppContent 
-        currentPage={currentPage} 
-        setCurrentPage={setCurrentPage}
-      />
+      <ToastProvider>
+        <AppContent 
+          currentPage={currentPage} 
+          setCurrentPage={setCurrentPage}
+        />
+      </ToastProvider>
     </WalletProvider>
   );
 }

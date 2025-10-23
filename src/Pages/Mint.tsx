@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from "react";
 import { useWallet } from "../contexts/WalletContext";
 import { useMarketplaceSDK } from "../hooks/useMarketplaceSDK";
+import { useToast } from "../contexts/ToastContext";
 import "./Mint.css";
 
 const Mint: React.FC = () => {
   const { account } = useWallet();
   const { sdk } = useMarketplaceSDK();
+  const { showSuccess, showError } = useToast();
   const [isAdmin, setIsAdmin] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isMinting, setIsMinting] = useState(false);
@@ -41,7 +43,7 @@ const Mint: React.FC = () => {
     e.preventDefault();
 
     if (!sdk || !recipient || !tokenURI) {
-      setError("Please fill in all fields");
+      showError("Missing Information", "Please fill in all fields");
       return;
     }
 
@@ -53,16 +55,20 @@ const Mint: React.FC = () => {
       const txHash = await sdk.mintDomain(recipient, tokenURI);
 
       if (txHash) {
-        setSuccess(`NFT minted successfully! Transaction: ${txHash}`);
+        showSuccess(
+          "NFT Minted Successfully! 🎉",
+          `New domain NFT has been minted to ${recipient}`,
+          txHash
+        );
         // Clear form
         setTokenURI("");
         // Keep recipient filled
       } else {
-        setError("Failed to mint NFT. Make sure you have MINTER_ROLE.");
+        showError("Mint Failed", "Failed to mint NFT. Make sure you have MINTER_ROLE.");
       }
     } catch (err: any) {
       console.error("Error minting:", err);
-      setError(err.message || "Failed to mint NFT");
+      showError("Mint Error", err.message || "Failed to mint NFT");
     } finally {
       setIsMinting(false);
     }
