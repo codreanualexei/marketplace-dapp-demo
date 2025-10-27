@@ -1037,6 +1037,19 @@ export class MarketplaceSDK {
     }
   }
 
+  /**
+   * Get royalty info for a specific token
+   */
+  async getRoyaltyInfo(tokenId: number, salePrice: bigint = BigInt(40000000)): Promise<[string, bigint] | null> {
+    try {
+      const royaltyInfo = await this.nftContract.royaltyInfo(tokenId, salePrice);
+      return royaltyInfo;
+    } catch (error: any) {
+      this.error(`Error fetching royalty info for token ${tokenId}:`, error);
+      return null;
+    }
+  }
+
   // Get token data from collection (enhanced with Alchemy)
   async getStrDomainFromCollection(
     tokenId: number,

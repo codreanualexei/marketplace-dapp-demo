@@ -12,6 +12,10 @@ export interface AlchemyTokenData {
 
 export interface AlchemyFormattedToken extends AlchemyTokenData {
   tokenId: number;
+  image?: string;
+  metadata?: any;
+  royaltyBalance?: string;
+  splitterAddress?: string;
 }
 
 export interface AlchemyListedToken {
