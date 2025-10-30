@@ -1067,13 +1067,33 @@ export class MarketplaceSDK {
         this.log(`Alchemy metadata not available for token ${tokenId}, using contract data only`);
       }
       
+      // Extract best-effort image URL and resolve IPFS
+      const resolveIpfs = (url?: string): string | undefined => {
+        if (!url) return undefined;
+        if (url.startsWith("ipfs://")) {
+          const path = url.replace("ipfs://", "");
+          return `https://ipfs.io/ipfs/${path}`;
+        }
+        return url;
+      };
+      const imageUrl = alchemyMetadata?.image?.cachedUrl ||
+        alchemyMetadata?.image?.originalUrl ||
+        (alchemyMetadata as any)?.image?.pngUrl ||
+        (alchemyMetadata as any)?.image?.url ||
+        (alchemyMetadata as any)?.raw?.image ||
+        (alchemyMetadata as any)?.rawMetadata?.image ||
+        (alchemyMetadata as any)?.tokenUri?.gateway ||
+        (alchemyMetadata as any)?.tokenUri?.raw;
+
       const formattedToken: AlchemyFormattedToken = {
         tokenId: tokenId,
         creator: data[0], // Creator address from contract
         mintTimestamp: Number(data[1]),
-        uri: alchemyMetadata?.tokenUri?.raw || data[2], // Use Alchemy URI if available, otherwise contract URI
+        uri: (alchemyMetadata as any)?.tokenUri?.raw || data[2], // Use Alchemy URI if available, otherwise contract URI
         lastPrice: data[3].toString(),
         lastPriceTimestamp: data[4].toString(),
+        image: resolveIpfs(imageUrl),
+        metadata: alchemyMetadata || undefined,
       };
 
       this.log(`Retrieved token data for #${tokenId} - Creator: ${data[0]}`);

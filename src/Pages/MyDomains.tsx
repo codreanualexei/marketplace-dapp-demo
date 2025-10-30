@@ -308,10 +308,12 @@ const MyDomains: React.FC = () => {
                 <div key={domain.tokenId} className="nft-card">
                   <div className="nft-card-image">
                     <img
-                      src={
-                        domain.uri ||
-                        `https://via.placeholder.com/400x400/667eea/ffffff?text=Domain+${domain.tokenId}`
-                      }
+                      src={(() => {
+                        const imageSrc = domain.image ||
+                          domain.uri ||
+                          `https://via.placeholder.com/400x400/667eea/ffffff?text=Domain+${domain.tokenId}`;
+                        return imageSrc;
+                      })()}
                       alt={`Domain #${domain.tokenId}`}
                       onError={(e) => {
                         e.currentTarget.src = `https://via.placeholder.com/400x400/667eea/ffffff?text=Domain+${domain.tokenId}`;

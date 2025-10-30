@@ -230,13 +230,43 @@ export class AlchemyService {
       // - last price
       // - last price timestamp
       
+      // Best-effort image extraction from available fields
+      const resolveIpfs = (url?: string): string | undefined => {
+        if (!url) return undefined;
+        if (url.startsWith("ipfs://")) {
+          const path = url.replace("ipfs://", "");
+          return `https://ipfs.io/ipfs/${path}`;
+        }
+        return url;
+      };
+
+      // Try multiple locations for image URL from both the NFT object and fetched metadata
+      const imageFromNft = (nft as any)?.image?.cachedUrl
+        || (nft as any)?.image?.originalUrl
+        || (nft as any)?.media?.[0]?.gateway
+        || (nft as any)?.media?.[0]?.thumbnail
+        || (nft as any)?.media?.[0]?.raw;
+
+      const imageFromMetadata = (metadata as any)?.image?.cachedUrl
+        || (metadata as any)?.image?.originalUrl
+        || (metadata as any)?.image?.pngUrl
+        || (metadata as any)?.image?.url
+        || (metadata as any)?.raw?.image
+        || (metadata as any)?.rawMetadata?.image
+        || (metadata as any)?.tokenUri?.gateway
+        || (metadata as any)?.tokenUri?.raw;
+
+      const resolvedImage = resolveIpfs(imageFromNft) || resolveIpfs(imageFromMetadata);
+
       const tokenData: AlchemyFormattedToken = {
         tokenId,
         creator: '0x0000000000000000000000000000000000000000', // Will be replaced by contract data
         mintTimestamp: Math.floor(Date.now() / 1000), // Will be replaced by contract data
-        uri: (metadata.tokenUri as any)?.raw || metadata.tokenUri || '',
+        uri: (metadata.tokenUri as any)?.raw || (metadata as any)?.tokenUri || '',
         lastPrice: '0', // Will be replaced by contract data
         lastPriceTimestamp: '0', // Will be replaced by contract data
+        image: resolvedImage,
+        metadata,
       };
 
       return tokenData;

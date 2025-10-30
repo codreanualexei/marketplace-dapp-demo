@@ -255,10 +255,12 @@ const MyListings: React.FC = () => {
                     <div key={listing.listingId} className="nft-card">
                       <div className="nft-card-image">
                         <img
-                          src={
-                            listing.tokenData?.uri ||
-                            `https://via.placeholder.com/400x400/667eea/ffffff?text=Domain+${listing.tokenId}`
-                          }
+                          src={(() => {
+                            const imageSrc = listing.tokenData?.image ||
+                              listing.tokenData?.uri ||
+                              `https://via.placeholder.com/400x400/667eea/ffffff?text=Domain+${listing.tokenId}`;
+                            return imageSrc;
+                          })()}
                           alt={`Domain #${listing.tokenId}`}
                           onError={(e) => {
                             e.currentTarget.src = `https://via.placeholder.com/400x400/667eea/ffffff?text=Domain+${listing.tokenId}`;
@@ -372,10 +374,12 @@ const MyListings: React.FC = () => {
                     <div key={listing.listingId} className="nft-card">
                       <div className="nft-card-image">
                         <img
-                          src={
-                            listing.tokenData?.uri ||
-                            `https://via.placeholder.com/400x400/667eea/ffffff?text=Domain+${listing.tokenId}`
-                          }
+                          src={(() => {
+                            const imageSrc = listing.tokenData?.image ||
+                              listing.tokenData?.uri ||
+                              `https://via.placeholder.com/400x400/667eea/ffffff?text=Domain+${listing.tokenId}`;
+                            return imageSrc;
+                          })()}
                           alt={`Domain #${listing.tokenId}`}
                           onError={(e) => {
                             e.currentTarget.src = `https://via.placeholder.com/400x400/667eea/ffffff?text=Domain+${listing.tokenId}`;
