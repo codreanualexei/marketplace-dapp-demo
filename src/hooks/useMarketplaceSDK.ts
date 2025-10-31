@@ -1,10 +1,12 @@
 import { useState, useEffect, useMemo } from "react";
+import { ethers } from "ethers";
 import { useWallet } from "../contexts/WalletContext";
 import { MarketplaceSDK } from "../sdk/MarketplaceSDK";
 import {
   MARKETPLACE_ADDRESS,
   NFT_COLLECTION_ADDRESS,
 } from "../config/constants";
+import { NETWORK_CONFIG } from "../config/network";
 
 export const useMarketplaceSDK = () => {
   const { provider, signer, account } = useWallet();
@@ -15,10 +17,10 @@ export const useMarketplaceSDK = () => {
   // Get Alchemy API key from environment
   const alchemyApiKey = process.env.REACT_APP_ALCHEMY_API_KEY;
 
-  // Initialize SDK when wallet connects
+  // Initialize SDK when wallet connects or for read-only browsing
   useEffect(() => {
     const initializeSDK = async () => {
-      if (!provider || !signer || !account || !alchemyApiKey) {
+      if (!alchemyApiKey) {
         setSdk(null);
         setError(null);
         return;
@@ -28,10 +30,21 @@ export const useMarketplaceSDK = () => {
       setError(null);
 
       try {
-        console.log("Initializing Alchemy Marketplace SDK...");
-        
-            const newSdk = new MarketplaceSDK(
-          signer,
+        console.log("Initializing Marketplace SDK...");
+
+        let signerToUse = signer as ethers.Signer | null;
+
+        if (!signerToUse) {
+          const rpcUrl = NETWORK_CONFIG.rpcUrl;
+          const readOnlyProvider = new ethers.JsonRpcProvider(rpcUrl);
+          signerToUse = new ethers.VoidSigner(
+            "0x000000000000000000000000000000000000dEaD",
+            readOnlyProvider
+          );
+        }
+
+        const newSdk = new MarketplaceSDK(
+          signerToUse,
           MARKETPLACE_ADDRESS,
           NFT_COLLECTION_ADDRESS,
           alchemyApiKey,
@@ -39,9 +52,9 @@ export const useMarketplaceSDK = () => {
         );
 
         setSdk(newSdk);
-        console.log("Alchemy Marketplace SDK initialized successfully");
+        console.log("Marketplace SDK initialized successfully");
       } catch (err: any) {
-        console.error("Failed to initialize Alchemy Marketplace SDK:", err);
+        console.error("Failed to initialize Marketplace SDK:", err);
         setError(err.message || "Failed to initialize SDK");
         setSdk(null);
       } finally {
@@ -69,8 +82,8 @@ export const useMarketplaceSDK = () => {
     sdk,
     isLoading,
     error,
-    isReady: !!sdk && !!account && !error,
-  }), [sdk, isLoading, error, account]);
+    isReady: !!sdk && !error,
+  }), [sdk, isLoading, error]);
 
   return sdkState;
 };

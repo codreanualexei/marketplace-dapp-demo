@@ -4,9 +4,11 @@ import "./Hero.css";
 
 interface HeroProps {
   onNavigate?: (page: string) => void;
+  heroImage?: string | null;
+  isHeroLoading?: boolean;
 }
 
-const Hero: React.FC<HeroProps> = ({ onNavigate }) => {
+const Hero: React.FC<HeroProps> = ({ onNavigate, heroImage, isHeroLoading }) => {
   const { account, connectWallet, isConnecting } = useWallet();
   const [showWalletOptions, setShowWalletOptions] = useState(false);
 
@@ -93,6 +95,22 @@ const Hero: React.FC<HeroProps> = ({ onNavigate }) => {
           <div className="nft-card-demo">
             <div className="nft-card-inner">
               <div className="nft-card-gradient"></div>
+              {isHeroLoading ? (
+                <div className="hero-image-loading">
+                  <div className="hero-spinner"></div>
+                  {/* <span>Loading latest domain...</span> */}
+                </div>
+              ) : heroImage ? (
+                <div className="hero-card-image-wrapper">
+                  <img
+                    src={heroImage}
+                    alt="Featured NFT"
+                    onError={(e) => {
+                      e.currentTarget.style.display = "none";
+                    }}
+                  />
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
