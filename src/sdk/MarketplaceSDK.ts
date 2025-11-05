@@ -1,9 +1,14 @@
 import { ethers } from "ethers";
 import { AlchemyService, AlchemyFormattedToken, AlchemyListedToken } from "../services/AlchemyService";
-import MarketplaceABI from "../contracts/abis/Marketplace.json";
-import StrDomainsNFTABI from "../contracts/abis/StrDomainsNFT.json";
-import RoyaltySplitterABI from "../contracts/abis/RoyaltySplitter.json";
+import MarketplaceJSON from "../contracts/abis/Marketplace.json";
+import StrDomainsNFTJSON from "../contracts/abis/StrDomainsNFT.json";
+import RoyaltySplitterJSON from "../contracts/abis/RoyaltySplitter.json";
 import { NETWORK_CONFIG, getWalletNetworkConfig, validateNetworkConfig } from "../config/network";
+
+// Extract ABIs from Hardhat artifact JSON files
+const MarketplaceABI = MarketplaceJSON.abi;
+const StrDomainsNFTABI = StrDomainsNFTJSON.abi;
+const RoyaltySplitterABI = RoyaltySplitterJSON.abi;
 
 // Re-export types for compatibility
 export type { AlchemyFormattedToken as FormattedToken, AlchemyListedToken as ListedToken } from "../services/AlchemyService";
@@ -2153,11 +2158,12 @@ export class MarketplaceSDK {
   async mintDomain(
     originalCreator: string,
     URI: string,
+    domainName: string,
   ): Promise<string | null> {
     if (!(await this.isAdmin())) return null;
 
     try {
-      this.log(`Minting domain NFT for creator ${originalCreator} with URI ${URI}...`);
+      this.log(`Minting domain NFT for creator ${originalCreator} with URI ${URI} and domain name ${domainName}...`);
       
       // Wait for network stability before minting
       await this.ensureCorrectNetwork();
@@ -2166,7 +2172,7 @@ export class MarketplaceSDK {
       let gasEstimate;
       try {
         this.log("Attempting gas estimation for minting...");
-        gasEstimate = await this.nftContractWrite.mint.estimateGas(originalCreator, URI);
+        gasEstimate = await this.nftContractWrite.mint.estimateGas(originalCreator, URI, domainName);
         this.log(`Minting gas estimate successful: ${gasEstimate.toString()}`);
       } catch (gasError: any) {
         this.error("Minting gas estimation failed:", gasError);
@@ -2182,7 +2188,7 @@ export class MarketplaceSDK {
       
       this.log(`Sending minting transaction with gas limit: ${gasSettings.gasLimit.toString()}`);
       
-      const tx = await this.nftContractWrite.mint(originalCreator, URI, {
+      const tx = await this.nftContractWrite.mint(originalCreator, URI, domainName, {
         ...gasSettings, // Spread gas settings (gasLimit, maxFeePerGas, maxPriorityFeePerGas)
       });
       
@@ -2235,6 +2241,7 @@ export class MarketplaceSDK {
       this.log(`Domain NFT minted successfully! Transaction: ${receipt.hash}`);
       this.log(`Creator: ${originalCreator}`);
       this.log(`URI: ${URI}`);
+      this.log(`Domain Name: ${domainName}`);
       this.log(`Gas used: ${receipt.gasUsed.toString()}`);
       this.log(`Block number: ${receipt.blockNumber}`);
       

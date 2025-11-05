@@ -14,6 +14,7 @@ const Mint: React.FC = () => {
 
   const [recipient, setRecipient] = useState("");
   const [tokenURI, setTokenURI] = useState("");
+  const [domainName, setDomainName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -42,7 +43,7 @@ const Mint: React.FC = () => {
   const handleMint = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!sdk || !recipient || !tokenURI) {
+    if (!sdk || !recipient || !tokenURI || !domainName) {
       showError("Missing Information", "Please fill in all fields");
       return;
     }
@@ -52,7 +53,7 @@ const Mint: React.FC = () => {
     setSuccess(null);
 
     try {
-      const txHash = await sdk.mintDomain(recipient, tokenURI);
+      const txHash = await sdk.mintDomain(recipient, tokenURI, domainName);
 
       if (txHash) {
         showSuccess(
@@ -62,6 +63,7 @@ const Mint: React.FC = () => {
         );
         // Clear form
         setTokenURI("");
+        setDomainName("");
         // Keep recipient filled
       } else {
         showError("Mint Failed", "Failed to mint NFT. Make sure you have MINTER_ROLE.");
@@ -152,6 +154,19 @@ const Mint: React.FC = () => {
               <small>Metadata URI (IPFS or HTTP link to JSON metadata)</small>
             </div>
 
+            <div className="form-group">
+              <label htmlFor="domainName">Domain Name</label>
+              <input
+                id="domainName"
+                type="text"
+                value={domainName}
+                onChange={(e) => setDomainName(e.target.value)}
+                placeholder="example.domain"
+                required
+              />
+              <small>The domain name for this NFT (e.g., "example.domain")</small>
+            </div>
+
             {error && <div className="alert error">{error}</div>}
 
             {success && <div className="alert success">{success}</div>}
@@ -159,7 +174,7 @@ const Mint: React.FC = () => {
             <button
               type="submit"
               className="mint-button"
-              disabled={isMinting || !recipient || !tokenURI}
+              disabled={isMinting || !recipient || !tokenURI || !domainName}
             >
               {isMinting ? "Minting..." : "Mint NFT"}
             </button>
