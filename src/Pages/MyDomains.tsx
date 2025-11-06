@@ -156,12 +156,17 @@ const MyDomains: React.FC = () => {
   const { sdk, isLoading: sdkLoading, error: sdkError } = useMarketplaceSDK();
   const [myDomains, setMyDomains] = useState<FormattedToken[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingApprovals, setIsLoadingApprovals] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [listingTokenId, setListingTokenId] = useState<number | null>(null);
   const [listPrice, setListPrice] = useState<string>("");
   const [currentPage, setCurrentPage] = useState(1);
   const [tokenApprovalStatus, setTokenApprovalStatus] = useState<Record<number, boolean>>({});
   const [checkingApproval, setCheckingApproval] = useState<Record<number, boolean>>({});
+  const [isAwaitingSignature, setIsAwaitingSignature] = useState(false);
+
+  // Show loading screen until all data is loaded (domains + approval status) OR awaiting signature
+  const isFullyLoading = isLoading || isLoadingApprovals || isAwaitingSignature;
 
   // Load domains when component mounts and SDK is available
   useEffect(() => {
@@ -171,57 +176,83 @@ const MyDomains: React.FC = () => {
   }, [sdk, account]);
 
   const loadMyDomains = async () => {
-    if (!sdk) return;
+    if (!sdk || !account) {
+      console.warn("Cannot load domains: SDK or account not available");
+      return;
+    }
 
     setIsLoading(true);
+    setIsLoadingApprovals(true);
     setError(null);
+    setMyDomains([]);
+    setTokenApprovalStatus({});
 
     try {
-      console.log("Loading domains using Alchemy-enhanced SDK...");
+      console.log("Loading domains using subgraph...", { account });
       const startTime = Date.now();
       
       const domains = await sdk.getMyDomainsFromCollection();
       
       const endTime = Date.now();
       console.log(`Loaded ${domains.length} domains in ${endTime - startTime}ms`);
+      console.log("Domains data:", domains);
       
+      if (domains.length === 0) {
+        console.warn("No domains found. This could mean:");
+        console.warn("1. You don't own any NFTs in this collection");
+        console.warn("2. The subgraph hasn't indexed your tokens yet");
+        console.warn("3. There's an issue with the subgraph query");
+        // No domains, so no need to check approvals
+        setIsLoadingApprovals(false);
+        setMyDomains(domains);
+        return;
+      }
+      
+      // Set domains first (but don't show them yet - wait for approvals)
       setMyDomains(domains);
       
-      // Check approval status for all domains
+      // Check approval status for all domains (this must complete before showing cards)
       await checkApprovalStatusForAll(domains);
     } catch (err: any) {
       console.error("Error loading domains:", err);
-      setError("Failed to load your domains");
+      setError(`Failed to load your domains: ${err.message || 'Unknown error'}`);
+      setIsLoadingApprovals(false);
     } finally {
       setIsLoading(false);
     }
   };
 
   const checkApprovalStatusForAll = async (domains: FormattedToken[]) => {
-    if (!sdk) return;
+    if (!sdk) {
+      setIsLoadingApprovals(false);
+      return;
+    }
     
-    console.log(`Checking approval status for ${domains.length} domains...`);
+    console.log(`Checking approval status for ${domains.length} domains using batch method...`);
+    const startTime = Date.now();
     
-    const approvalPromises = domains.map(async (domain) => {
-      try {
-        console.log(`Checking approval for token ${domain.tokenId}...`);
-        const isApproved = await sdk.isTokenApprovedForMarketplace(domain.tokenId);
-        console.log(`Token ${domain.tokenId} approval status:`, isApproved);
-        return { tokenId: domain.tokenId, isApproved };
-      } catch (error) {
-        console.error(`Error checking approval for token ${domain.tokenId}:`, error);
-        return { tokenId: domain.tokenId, isApproved: false };
-      }
-    });
-
-    const results = await Promise.all(approvalPromises);
-    const approvalMap: Record<number, boolean> = {};
-    results.forEach(({ tokenId, isApproved }) => {
-      approvalMap[tokenId] = isApproved;
-    });
-    
-    console.log('Final approval status map:', approvalMap);
-    setTokenApprovalStatus(approvalMap);
+    try {
+      // Use optimized batch method (checks isApprovedForAll once, then individual tokens if needed)
+      const tokenIds = domains.map(domain => domain.tokenId);
+      const approvalMap = await sdk.batchCheckTokenApprovals(tokenIds);
+      
+      const endTime = Date.now();
+      console.log(`Batch approval check completed in ${endTime - startTime}ms`);
+      console.log('Final approval status map:', approvalMap);
+      
+      setTokenApprovalStatus(approvalMap);
+    } catch (error) {
+      console.error('Error in batch approval check:', error);
+      // Fallback: set all to false
+      const approvalMap: Record<number, boolean> = {};
+      domains.forEach(domain => {
+        approvalMap[domain.tokenId] = false;
+      });
+      setTokenApprovalStatus(approvalMap);
+    } finally {
+      // Mark approvals as loaded - now we can show the cards
+      setIsLoadingApprovals(false);
+    }
   };
 
   const checkApprovalStatus = async (tokenId: number) => {
@@ -262,9 +293,11 @@ const MyDomains: React.FC = () => {
     if (!confirmed) return;
 
     setIsLoading(true);
+    setIsAwaitingSignature(true);
 
     try {
       const txHash = await sdk.approveTokenForSale(tokenId);
+      setIsAwaitingSignature(false);
 
       if (txHash) {
         showSuccess(
@@ -279,6 +312,7 @@ const MyDomains: React.FC = () => {
       }
     } catch (err: any) {
       console.error("Error approving token:", err);
+      setIsAwaitingSignature(false);
       showError("Approval Failed", err.message || "Failed to approve domain");
     } finally {
       setIsLoading(false);
@@ -298,9 +332,11 @@ const MyDomains: React.FC = () => {
     if (!confirmed) return;
 
     setIsLoading(true);
+    setIsAwaitingSignature(true);
 
     try {
       const txHash = await sdk.listTokenDirect(tokenId, listPrice);
+      setIsAwaitingSignature(false);
 
       if (txHash) {
         showSuccess(
@@ -320,6 +356,7 @@ const MyDomains: React.FC = () => {
       }
     } catch (err: any) {
       console.error("Error listing token:", err);
+      setIsAwaitingSignature(false);
       showError("Listing Failed", err.message || "Failed to list domain");
     } finally {
       setIsLoading(false);
@@ -357,7 +394,7 @@ const MyDomains: React.FC = () => {
       <div className="my-domains">
         <div className="loading">
           <div className="spinner"></div>
-          <p>Initializing Alchemy SDK...</p>
+          <p>Initializing SDK...</p>
         </div>
       </div>
     );
@@ -385,17 +422,6 @@ const MyDomains: React.FC = () => {
     );
   }
 
-  if (isLoading && myDomains.length === 0) {
-    return (
-      <div className="my-domains">
-        <div className="loading">
-          <div className="spinner"></div>
-          <p>Loading your domains with Alchemy...</p>
-        </div>
-      </div>
-    );
-  }
-
   if (error) {
     return (
       <div className="my-domains">
@@ -415,34 +441,39 @@ const MyDomains: React.FC = () => {
           <p>Manage your domain NFTs</p>
         </div>
 
-        <div className="load-section">
-          <button
-            className="load-button"
-            onClick={loadMyDomains}
-            disabled={isLoading}
-          >
-            {isLoading ? "Loading Your Domains..." : "Load My Domains"}
-          </button>
-          <p className="load-hint">
-            Click to scan the collection for NFTs you own
-          </p>
-        </div>
+        {/* Show stats card only when not awaiting signature */}
+        {!isAwaitingSignature && (
+          <div className="domains-stats">
+            <div className="stat-card">
+              <span className="stat-value">{myDomains.length}</span>
+              <span className="stat-label">Total Domains</span>
+            </div>
+          </div>
+        )}
 
-        {myDomains.length === 0 && !isLoading ? (
+        {/* Show loading screen for content, but stats are always visible above */}
+        {isFullyLoading ? (
+          <div className="loading-overlay">
+            <div className="loading">
+              <div className="spinner"></div>
+              <p>
+                {isAwaitingSignature 
+                  ? "Waiting for your signature..." 
+                  : isLoading 
+                    ? "Loading your domains..." 
+                    : "Loading approval status..."}
+              </p>
+            </div>
+          </div>
+        ) : myDomains.length === 0 ? (
           <div className="empty-state">
-            <h3>Click "Load My Domains" to check ownership</h3>
+            <h3>No domains found</h3>
             <p>
-              This will scan the collection for NFTs owned by your address
+              You don't own any domains in this collection yet
             </p>
           </div>
-        ) : myDomains.length > 0 ? (
+        ) : myDomains.length > 0 && !isFullyLoading ? (
           <>
-            <div className="domains-stats">
-              <div className="stat-card">
-                <span className="stat-value">{myDomains.length}</span>
-                <span className="stat-label">Total Domains</span>
-              </div>
-            </div>
 
             <div className="nft-grid">
               {paginatedDomains.map((domain) => {

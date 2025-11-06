@@ -195,6 +195,13 @@ const MyListings: React.FC = () => {
   );
   const [activeCurrentPage, setActiveCurrentPage] = useState(1);
   const [soldCurrentPage, setSoldCurrentPage] = useState(1);
+  const [isAwaitingSignature, setIsAwaitingSignature] = useState(false);
+
+  // Calculate stats (will be 0 initially, then update when data loads)
+  // Calculate before loading check so stats are always available
+  const activeListings = myListings.filter((l) => l.active);
+  const historyListings = myListings.filter((l) => !l.active);
+  
 
   const loadMyListings = useCallback(async () => {
     if (!sdk) return;
@@ -203,7 +210,7 @@ const MyListings: React.FC = () => {
     setError(null);
 
     try {
-      console.log("Loading my listings using Alchemy-enhanced SDK...");
+      console.log("Loading my listings using subgraph...");
       const startTime = Date.now();
 
       const listings =
@@ -250,9 +257,11 @@ const MyListings: React.FC = () => {
     if (!confirmed) return;
 
     setIsLoading(true);
+    setIsAwaitingSignature(true);
 
     try {
       const txHash = await sdk.updateListing(listingId, newPrice);
+      setIsAwaitingSignature(false);
 
       if (txHash) {
         showSuccess(
@@ -268,6 +277,7 @@ const MyListings: React.FC = () => {
       }
     } catch (err: any) {
       console.error("Error updating listing:", err);
+      setIsAwaitingSignature(false);
       showError("Update Error", err.message || "Failed to update price");
     } finally {
       setIsLoading(false);
@@ -284,9 +294,11 @@ const MyListings: React.FC = () => {
     if (!confirmed) return;
 
     setCancelingListingId(listingId);
+    setIsAwaitingSignature(true);
 
     try {
       const txHash = await sdk.cancelListing(listingId);
+      setIsAwaitingSignature(false);
 
       if (txHash) {
         showSuccess(
@@ -313,6 +325,7 @@ const MyListings: React.FC = () => {
       }
       
       showError("Cancel Error", errorMessage);
+      setIsAwaitingSignature(false);
     } finally {
       setCancelingListingId(null);
     }
@@ -329,17 +342,6 @@ const MyListings: React.FC = () => {
     );
   }
 
-  if (isLoading && myListings.length === 0) {
-    return (
-      <div className="my-listings">
-        <div className="loading">
-          <div className="spinner"></div>
-          <p>Loading your listings...</p>
-        </div>
-      </div>
-    );
-  }
-
   if (error) {
     return (
       <div className="my-listings">
@@ -350,9 +352,6 @@ const MyListings: React.FC = () => {
       </div>
     );
   }
-
-  const activeListings = myListings.filter((l) => l.active);
-  const historyListings = myListings.filter((l) => !l.active);
 
   // Pagination for active listings
   const activeTotalPages = Math.ceil(activeListings.length / ITEMS_PER_PAGE);
@@ -393,22 +392,37 @@ const MyListings: React.FC = () => {
           <p>Manage your marketplace listings</p>
         </div>
 
-        <div className="listings-stats">
-          <div className="stat-card">
-            <span className="stat-value">{activeListings.length}</span>
-            <span className="stat-label">Active Listings</span>
+        {/* Show stats cards only when not awaiting signature */}
+        {!isAwaitingSignature && (
+          <div className="listings-stats">
+            <div className="stat-card">
+              <span className="stat-value">{activeListings.length}</span>
+              <span className="stat-label">Active Listings</span>
+            </div>
+            <div className="stat-card">
+              <span className="stat-value">{historyListings.length}</span>
+              <span className="stat-label">Listing History</span>
+            </div>
+            <div className="stat-card">
+              <span className="stat-value">{myListings.length}</span>
+              <span className="stat-label">Total Listings</span>
+            </div>
           </div>
-          <div className="stat-card">
-            <span className="stat-value">{historyListings.length}</span>
-            <span className="stat-label">Listing History</span>
-          </div>
-          <div className="stat-card">
-            <span className="stat-value">{myListings.length}</span>
-            <span className="stat-label">Total Listings</span>
-          </div>
-        </div>
+        )}
 
-        {myListings.length === 0 ? (
+        {/* Show loading screen when loading OR awaiting signature */}
+        {isLoading || isAwaitingSignature ? (
+          <div className="loading-overlay">
+            <div className="loading">
+              <div className="spinner"></div>
+              <p>
+                {isAwaitingSignature 
+                  ? "Waiting for your signature..." 
+                  : "Loading your listings..."}
+              </p>
+            </div>
+          </div>
+        ) : myListings.length === 0 ? (
           <div className="empty-state">
             <h3>No listings found</h3>
             <p>You haven't listed any domains for sale yet</p>

@@ -239,12 +239,90 @@
 }
 
 .hero-spinner {
+  position: relative;
   width: 40px;
   height: 40px;
-  border: 4px solid rgba(255, 255, 255, 0.4);
-  border-top: 4px solid white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto;
+}
+
+.hero-spinner::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  transform: translate(-50%, -50%);
   border-radius: 50%;
-  animation: spin 1s linear infinite;
+  background: rgba(255, 255, 255, 0.9);
+  z-index: 10;
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.6);
+  animation: centerPulseWhite 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes centerPulseWhite {
+  0%, 100% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+    box-shadow: 0 0 8px rgba(255, 255, 255, 0.6), 0 0 16px rgba(255, 255, 255, 0.4);
+  }
+  50% {
+    transform: translate(-50%, -50%) scale(1.15);
+    opacity: 0.95;
+    box-shadow: 0 0 12px rgba(255, 255, 255, 0.8), 0 0 24px rgba(255, 255, 255, 0.6);
+  }
+}
+
+.hero-spinner::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 40px;
+  height: 40px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(255, 255, 255, 0.7) 0%,
+    rgba(255, 255, 255, 0.55) 8%,
+    rgba(255, 255, 255, 0.45) 16%,
+    rgba(255, 255, 255, 0.4) 24%,
+    rgba(255, 255, 255, 0.32) 32%,
+    rgba(255, 255, 255, 0.24) 40%,
+    rgba(255, 255, 255, 0.18) 48%,
+    rgba(255, 255, 255, 0.12) 56%,
+    rgba(255, 255, 255, 0.08) 64%,
+    rgba(255, 255, 255, 0.05) 72%,
+    rgba(255, 255, 255, 0.02) 80%,
+    transparent 88%
+  );
+  filter: blur(1px);
+  animation: purplePulseExpandWhite 2s cubic-bezier(0.23, 1, 0.32, 1) infinite;
+}
+
+@keyframes purplePulseExpandWhite {
+  0% {
+    transform: translate(-50%, -50%) scale(0.5);
+    opacity: 1;
+    filter: blur(0.5px);
+  }
+  30% {
+    opacity: 0.9;
+    filter: blur(1.5px);
+  }
+  60% {
+    opacity: 0.6;
+    filter: blur(2.5px);
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(12);
+    opacity: 0;
+    filter: blur(4px);
+  }
 }
 
 @keyframes gradientShift {

@@ -14,15 +14,15 @@ export const useMarketplaceSDK = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Get Alchemy API key from environment
-  const alchemyApiKey = process.env.REACT_APP_ALCHEMY_API_KEY;
+  // Get subgraph URL from environment
+  const subgraphUrl = process.env.REACT_APP_SUBGRAPH_URL;
 
   // Initialize SDK when wallet connects or for read-only browsing
   useEffect(() => {
     const initializeSDK = async () => {
-      if (!alchemyApiKey) {
+      if (!subgraphUrl) {
         setSdk(null);
-        setError(null);
+        setError("Subgraph URL not configured. Please set REACT_APP_SUBGRAPH_URL in your environment variables.");
         return;
       }
 
@@ -47,7 +47,7 @@ export const useMarketplaceSDK = () => {
           signerToUse,
           MARKETPLACE_ADDRESS,
           NFT_COLLECTION_ADDRESS,
-          alchemyApiKey,
+          subgraphUrl,
           process.env.NODE_ENV === "development"
         );
 
@@ -63,7 +63,7 @@ export const useMarketplaceSDK = () => {
     };
 
     initializeSDK();
-  }, [provider, signer, account, alchemyApiKey]);
+  }, [provider, signer, account, subgraphUrl]);
 
   // Update SDK signer when wallet changes
   useEffect(() => {

@@ -13,17 +13,87 @@
 }
 
 .loading-spinner-small {
+  position: relative;
   width: 14px;
   height: 14px;
-  border: 2px solid rgba(102, 126, 234, 0.2);
-  border-top-color: #667eea;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
+.loading-spinner-small::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  z-index: 10;
+  box-shadow: 0 0 4px rgba(102, 126, 234, 0.6);
+  animation: centerPulseSmall 1.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes centerPulseSmall {
+  0%, 100% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: translate(-50%, -50%) scale(1.2);
+    opacity: 0.9;
+  }
+}
+
+.loading-spinner-small::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(102, 126, 234, 0.7) 0%,
+    rgba(102, 126, 234, 0.55) 8%,
+    rgba(102, 126, 234, 0.45) 16%,
+    rgba(118, 75, 162, 0.4) 24%,
+    rgba(118, 75, 162, 0.32) 32%,
+    rgba(118, 75, 162, 0.24) 40%,
+    rgba(102, 126, 234, 0.18) 48%,
+    rgba(102, 126, 234, 0.12) 56%,
+    rgba(102, 126, 234, 0.08) 64%,
+    rgba(102, 126, 234, 0.05) 72%,
+    rgba(102, 126, 234, 0.02) 80%,
+    transparent 88%
+  );
+  filter: blur(0.5px);
+  animation: purplePulseExpandSmall 1.5s cubic-bezier(0.23, 1, 0.32, 1) infinite;
+}
+
+@keyframes purplePulseExpandSmall {
+  0% {
+    transform: translate(-50%, -50%) scale(0.5);
+    opacity: 1;
+    filter: blur(0.3px);
+  }
+  30% {
+    opacity: 0.9;
+    filter: blur(1px);
+  }
+  60% {
+    opacity: 0.6;
+    filter: blur(1.5px);
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(7);
+    opacity: 0;
+    filter: blur(2.5px);
   }
 }
 

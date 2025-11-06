@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { useWallet } from "../contexts/WalletContext";
 import { useMarketplaceSDK } from "../hooks/useMarketplaceSDK";
 import { useToast } from "../contexts/ToastContext";
-import { SplitterBalance, FormattedToken } from "../sdk/MarketplaceSDK";
+import { FormattedToken } from "../sdk/MarketplaceSDK";
 import { ethers } from "ethers";
 import { useNFTMetadata, getTokenURI } from "../hooks/useNFTMetadata";
 import { NFTMetadataDisplay } from "../Components/NFTMetadata";
@@ -115,6 +115,17 @@ const Royalties: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [withdrawing, setWithdrawing] = useState<string | null>(null);
+  const [isAwaitingSignature, setIsAwaitingSignature] = useState(false);
+
+  // Calculate stats for animation - must be called before any early returns
+  const getTotalRoyalties = () => {
+    return ownedDomains.reduce((sum, domain) => {
+      return sum + (domain.royaltyBalance ? parseFloat(domain.royaltyBalance) : 0);
+    }, 0);
+  };
+  
+  const totalRoyalties = getTotalRoyalties();
+  const marketplaceFeesNum = parseFloat(marketplaceFees) || 0;
 
   const loadBalances = useCallback(async () => {
     if (!sdk || !account) return;
@@ -166,124 +177,49 @@ const Royalties: React.FC = () => {
     setTotalDomainsToLoad(0);
 
     try {
-      console.log("Loading created domains (where user is creator)...");
+      console.log("Loading created domains (where user is creator) using subgraph...");
       const startTime = Date.now();
 
-      // First, get all domains from collection to find created ones
-      const allDomains = await sdk.getAllStrDomainsFromCollection();
-      const myAddress = account; // Use account from WalletContext
+      // Use subgraph to get created tokens directly (includes splitter data and balances)
+      const createdDomains = await sdk.getCreatedTokens(account);
       
-      // Filter domains where user is the creator
-      const createdDomains = allDomains.filter(domain => 
-        domain.creator.toLowerCase() === myAddress.toLowerCase()
-      );
-
       setTotalDomainsToLoad(createdDomains.length);
-      console.log(`Found ${createdDomains.length} domains created by you`);
+      console.log(`Found ${createdDomains.length} domains created by you via subgraph`);
 
       if (createdDomains.length === 0) {
         setIsLoadingDomains(false);
         return;
       }
 
-      // Load domains one by one with visual effect
-      const loadedDomains: FormattedToken[] = [];
-      
-      for (let i = 0; i < createdDomains.length; i++) {
-        const domain = createdDomains[i];
+      // The subgraph already includes splitter addresses and balances, so we can use them directly
+      // Sort domains to show those with royalties first, then by royalty amount (highest first)
+      const sortedDomains = createdDomains.sort((a, b) => {
+        const aHasRoyalty = a.royaltyBalance && parseFloat(a.royaltyBalance) > 0;
+        const bHasRoyalty = b.royaltyBalance && parseFloat(b.royaltyBalance) > 0;
         
-        try {
-          // Get enhanced token data with image
-          const enhancedData = await sdk.getTokenData(domain.tokenId);
-          let enhancedDomain: FormattedToken;
-          
-          if (enhancedData) {
-            enhancedDomain = {
-              ...domain,
-              image: enhancedData.image,
-              metadata: enhancedData.metadata
-            };
-          } else {
-            enhancedDomain = domain;
-          }
-          
-          // Try to get royalty balance for this specific domain
-          try {
-            const royaltyInfo = await sdk.getRoyaltyInfo(domain.tokenId, BigInt(40000000));
-            if (royaltyInfo && royaltyInfo[0] !== "0x0000000000000000000000000000000000000000") {
-              // This domain has a splitter contract
-              enhancedDomain.splitterAddress = royaltyInfo[0];
-            }
-          } catch (royaltyError) {
-            console.warn(`Could not get royalty info for domain ${domain.tokenId}:`, royaltyError);
-          }
-          
-          loadedDomains.push(enhancedDomain);
-          setLoadedDomainsCount(i + 1);
-          setOwnedDomains([...loadedDomains]);
-          
-          // Small delay for visual effect
-          await new Promise(resolve => setTimeout(resolve, 200));
-        } catch (error) {
-          console.warn(`Failed to enhance domain ${domain.tokenId} with metadata:`, error);
-          loadedDomains.push(domain);
-          setLoadedDomainsCount(i + 1);
-          setOwnedDomains([...loadedDomains]);
+        // First priority: domains with royalties come first
+        if (aHasRoyalty && !bHasRoyalty) return -1;
+        if (!aHasRoyalty && bHasRoyalty) return 1;
+        
+        // Second priority: within royalty group, sort by amount (highest first)
+        if (aHasRoyalty && bHasRoyalty) {
+          const aAmount = parseFloat(a.royaltyBalance!);
+          const bAmount = parseFloat(b.royaltyBalance!);
+          return bAmount - aAmount; // Higher amounts first
         }
-      }
-
-      // Now get splitter balances for domains that have splitter addresses
-      const domainsWithSplitters = loadedDomains.filter(d => d.splitterAddress);
-      if (domainsWithSplitters.length > 0) {
-        console.log(`Getting splitter balances for ${domainsWithSplitters.length} domains using Alchemy...`);
-        try {
-          const splitterBalances = await sdk.getSplitterBalanceOfWallet(account);
-          console.log(`Found ${splitterBalances.length} splitter balances from Alchemy`);
-          
-          // Match splitter balances to domains
-          const updatedDomains = loadedDomains.map(domain => {
-            if (domain.splitterAddress) {
-              const balance = splitterBalances.find(b => b.splitter === domain.splitterAddress);
-              if (balance && parseFloat(balance.balance) > 0) {
-                return {
-                  ...domain,
-                  royaltyBalance: balance.balance
-                };
-              }
-            }
-            return domain;
-          });
-          
-          // Sort domains to show those with royalties first, then by royalty amount (highest first)
-          const sortedDomains = updatedDomains.sort((a, b) => {
-            const aHasRoyalty = a.royaltyBalance && parseFloat(a.royaltyBalance) > 0;
-            const bHasRoyalty = b.royaltyBalance && parseFloat(b.royaltyBalance) > 0;
-            
-            // First priority: domains with royalties come first
-            if (aHasRoyalty && !bHasRoyalty) return -1;
-            if (!aHasRoyalty && bHasRoyalty) return 1;
-            
-            // Second priority: within royalty group, sort by amount (highest first)
-            if (aHasRoyalty && bHasRoyalty) {
-              const aAmount = parseFloat(a.royaltyBalance!);
-              const bAmount = parseFloat(b.royaltyBalance!);
-              return bAmount - aAmount; // Higher amounts first
-            }
-            
-            return 0; // Keep original order for domains without royalties
-          });
-          
-          setOwnedDomains(sortedDomains);
-        } catch (balanceError) {
-          console.warn("Could not fetch splitter balances from Alchemy:", balanceError);
-        }
-      }
+        
+        return 0; // Keep original order for domains without royalties
+      });
+      
+      setOwnedDomains(sortedDomains);
+      setLoadedDomainsCount(sortedDomains.length);
 
       const endTime = Date.now();
-      console.log(`Loaded ${loadedDomains.length} created domains in ${endTime - startTime}ms`);
+      console.log(`Loaded ${sortedDomains.length} created domains in ${endTime - startTime}ms`);
+      console.log(`Domains with royalties: ${sortedDomains.filter(d => d.royaltyBalance && parseFloat(d.royaltyBalance) > 0).length}`);
     } catch (err: any) {
       console.error("Error loading created domains:", err);
-      setError("Failed to load created domains. Please try again.");
+      setError(`Failed to load created domains: ${err.message || 'Unknown error'}`);
       setOwnedDomains([]);
     } finally {
       setIsLoadingDomains(false);
@@ -313,9 +249,11 @@ const Royalties: React.FC = () => {
     if (!confirmed) return;
 
     setWithdrawing(splitterAddress);
+    setIsAwaitingSignature(true);
 
     try {
       const result = await sdk.withdrawRoyaltyFromSplitter(splitterAddress);
+      setIsAwaitingSignature(false);
 
       if (result) {
         showSuccess(
@@ -330,6 +268,7 @@ const Royalties: React.FC = () => {
       }
     } catch (err: any) {
       console.error("Error withdrawing:", err);
+      setIsAwaitingSignature(false);
       showError("Withdrawal Error", err.message || "Failed to withdraw");
     } finally {
       setWithdrawing(null);
@@ -347,9 +286,11 @@ const Royalties: React.FC = () => {
     if (!confirmed) return;
 
     setWithdrawing("marketplace");
+    setIsAwaitingSignature(true);
 
     try {
       const txHash = await sdk.withdrawMarketPlaceFees();
+      setIsAwaitingSignature(false);
 
       if (txHash) {
         showSuccess(
@@ -366,6 +307,7 @@ const Royalties: React.FC = () => {
       }
     } catch (err: any) {
       console.error("Error withdrawing marketplace fees:", err);
+      setIsAwaitingSignature(false);
       showError("Withdrawal Error", err.message || "Failed to withdraw marketplace fees");
     } finally {
       setWithdrawing(null);
@@ -376,29 +318,12 @@ const Royalties: React.FC = () => {
     return `${address.slice(0, 6)}...${address.slice(-4)}`;
   };
 
-  const getTotalRoyalties = () => {
-    return ownedDomains.reduce((sum, domain) => {
-      return sum + (domain.royaltyBalance ? parseFloat(domain.royaltyBalance) : 0);
-    }, 0);
-  };
-
   if (!account) {
     return (
       <div className="royalties">
         <div className="connect-prompt">
           <h2>Connect Your Wallet</h2>
           <p>Please connect your wallet to view your royalties</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (isLoading) {
-    return (
-      <div className="royalties">
-        <div className="loading">
-          <div className="spinner"></div>
-          <p>Loading balances...</p>
         </div>
       </div>
     );
@@ -414,14 +339,15 @@ const Royalties: React.FC = () => {
 
         {error && <div className="error-banner">{error}</div>}
 
-        {/* Summary Cards */}
+        {/* Summary Cards - Show only when not awaiting signature */}
+        {!isAwaitingSignature && (
         <div className="summary-cards">
           <div className="summary-card">
             <div className="card-icon">💰</div>
             <div className="card-content">
               <span className="card-label">Total Royalties</span>
               <span className="card-value">
-                {getTotalRoyalties().toFixed(4)} MATIC
+                {totalRoyalties.toFixed(2)} MATIC
               </span>
             </div>
           </div>
@@ -431,7 +357,7 @@ const Royalties: React.FC = () => {
             <div className="card-content">
               <span className="card-label">Created Domains</span>
               <span className="card-value">
-                {isLoadingDomains ? `${loadedDomainsCount}/${totalDomainsToLoad}` : ownedDomains.length}
+                {ownedDomains.length}
                 {ownedDomains.length > 0 && (
                   <small style={{ display: 'block', fontSize: '12px', color: '#666' }}>
                     {ownedDomains.filter(d => d.royaltyBalance && parseFloat(d.royaltyBalance) > 0).length} with royalties
@@ -448,103 +374,88 @@ const Royalties: React.FC = () => {
               <div className="card-content">
                 <span className="card-label">Marketplace Fees</span>
                 <span className="card-value">
-                  {parseFloat(marketplaceFees).toFixed(4)} MATIC
+                  {marketplaceFeesNum.toFixed(2)} MATIC
                 </span>
               </div>
             </div>
           )}
         </div>
+        )}
 
-        {/* Created Domains Section */}
-        {(ownedDomains.length > 0 || isLoadingDomains) && (
-          <div className="domains-section">
-            <div className="section-header">
-              <div className="section-title-group">
-                <h2 className="section-title">Your Created Domains</h2>
-                <div className="section-stats">
-                  <span className="stat-item">
-                    {isLoadingDomains ? `${loadedDomainsCount}/${totalDomainsToLoad}` : ownedDomains.length} Total
-                  </span>
+        {/* Show loading overlay when awaiting signature OR loading domains */}
+        {isAwaitingSignature || isLoadingDomains ? (
+          <div className="loading-overlay">
+            <div className="loading">
+              <div className="spinner"></div>
+              <p>
+                {isAwaitingSignature 
+                  ? "Waiting for your signature..." 
+                  : "Loading your created domains..."}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* Created Domains Section - Always show section, stats update as data loads */}
+            <div className="domains-section">
+              <div className="section-header">
+                <div className="section-title-group">
+                  <h2 className="section-title">Your Created Domains</h2>
                   {ownedDomains.length > 0 && (
-                    <>
+                    <div className="section-stats">
+                      <span className="stat-item">
+                        {ownedDomains.length} Total
+                      </span>
                       <span className="stat-item highlight">
                         {ownedDomains.filter(d => d.royaltyBalance && parseFloat(d.royaltyBalance) > 0).length} With Royalties
                       </span>
                       <span className="stat-item">
                         {ownedDomains.filter(d => !d.royaltyBalance || parseFloat(d.royaltyBalance || '0') === 0).length} No Royalties
                       </span>
-                    </>
+                    </div>
                   )}
                 </div>
               </div>
-            </div>
-            <p className="section-description">
-              These are the domains you created and will receive royalties from when they are sold. 
-              Royalties are shown directly on each domain card with individual withdrawal buttons.
-            </p>
-            <div className="nft-grid">
-              {/* Show loaded domains */}
-              {ownedDomains.map((domain, index) => {
-                const hasRoyalty = !!(domain.royaltyBalance && parseFloat(domain.royaltyBalance) > 0);
-                const isFirstWithoutRoyalty = !hasRoyalty && index > 0 && 
-                  ownedDomains[index - 1].royaltyBalance && 
-                  parseFloat(ownedDomains[index - 1].royaltyBalance!) > 0;
-                
-                return (
-                  <React.Fragment key={domain.tokenId}>
-                    {isFirstWithoutRoyalty && (
-                      <div className="royalty-divider">
-                        <span className="divider-text">Domains without royalties</span>
-                      </div>
-                    )}
-                    <RoyaltyDomainCard
-                      key={domain.tokenId}
-                      domain={domain}
-                      hasRoyalty={hasRoyalty}
-                      withdrawing={withdrawing}
-                      handleWithdrawFromSplitter={handleWithdrawFromSplitter}
-                      formatAddress={formatAddress}
-                    />
-                  </React.Fragment>
-                );
-              })}
-
-              {/* Show loading card when loading - positioned after loaded domains */}
-              {isLoadingDomains && (
-                <div className="nft-card loading-card">
-                  <div className="nft-card-image">
-                    <div className="loading-placeholder">
-                      <div className="spinner"></div>
-                    </div>
-                  </div>
-                  <div className="nft-card-content">
-                    <div className="nft-card-header">
-                      <div className="loading-text"></div>
-                    </div>
-                    <div className="nft-info">
-                      <div className="info-row">
-                        <div className="loading-bar"></div>
-                      </div>
-                      <div className="info-row">
-                        <div className="loading-bar"></div>
-                      </div>
-                      <div className="info-row">
-                        <div className="loading-bar"></div>
-                      </div>
-                    </div>
-                    <div className="nft-card-footer">
-                      <div className="loading-button"></div>
-                    </div>
-                  </div>
+              <p className="section-description">
+                These are the domains you created and will receive royalties from when they are sold. 
+                Royalties are shown directly on each domain card with individual withdrawal buttons.
+              </p>
+              {ownedDomains.length > 0 ? (
+                <div className="nft-grid">
+                  {ownedDomains.map((domain, index) => {
+                    const hasRoyalty = !!(domain.royaltyBalance && parseFloat(domain.royaltyBalance) > 0);
+                    const isFirstWithoutRoyalty = !hasRoyalty && index > 0 && 
+                      ownedDomains[index - 1].royaltyBalance && 
+                      parseFloat(ownedDomains[index - 1].royaltyBalance!) > 0;
+                    
+                    return (
+                      <React.Fragment key={domain.tokenId}>
+                        {isFirstWithoutRoyalty && (
+                          <div className="royalty-divider">
+                            <span className="divider-text">Domains without royalties</span>
+                          </div>
+                        )}
+                        <RoyaltyDomainCard
+                          key={domain.tokenId}
+                          domain={domain}
+                          hasRoyalty={hasRoyalty}
+                          withdrawing={withdrawing}
+                          handleWithdrawFromSplitter={handleWithdrawFromSplitter}
+                          formatAddress={formatAddress}
+                        />
+                      </React.Fragment>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="empty-state">
+                  <p>No created domains found. Create some domains to start earning royalties!</p>
                 </div>
               )}
             </div>
-          </div>
-        )}
 
-
-        {/* Marketplace Owner Section */}
-        {isAdmin && (
+            {/* Marketplace Owner Section */}
+            {isAdmin && (
           <section className="royalties-section admin-section">
             <div className="section-header">
               <h2 className="section-title">Marketplace Fees (Admin Only)</h2>
@@ -555,7 +466,7 @@ const Royalties: React.FC = () => {
                 <div className="info-item">
                   <span className="label">Accumulated Fees:</span>
                   <span className="value price">
-                    {parseFloat(marketplaceFees).toFixed(4)} MATIC
+                    {parseFloat(marketplaceFees).toFixed(2)} MATIC
                   </span>
                 </div>
                 <p className="info-text">
@@ -579,28 +490,30 @@ const Royalties: React.FC = () => {
           </section>
         )}
 
-        <div className="info-box">
-          <h3>ℹ️ About Royalties</h3>
-          <ul>
-            <li>
-              <strong>Creator Royalties:</strong> Earned when domains you
-              created are resold
-            </li>
-            <li>
-              <strong>Minter Royalties:</strong> Earned from NFTs you minted
-            </li>
-            <li>
-              <strong>Splitter Contracts:</strong> Automatically distribute
-              royalties to creators and minters
-            </li>
-            {isAdmin && (
-              <li>
-                <strong>Marketplace Fees:</strong> Platform fees from all sales
-                (admin only)
-              </li>
-            )}
-          </ul>
-        </div>
+            <div className="info-box">
+              <h3>ℹ️ About Royalties</h3>
+              <ul>
+                <li>
+                  <strong>Creator Royalties:</strong> Earned when domains you
+                  created are resold
+                </li>
+                <li>
+                  <strong>Minter Royalties:</strong> Earned from NFTs you minted
+                </li>
+                <li>
+                  <strong>Splitter Contracts:</strong> Automatically distribute
+                  royalties to creators and minters
+                </li>
+                {isAdmin && (
+                  <li>
+                    <strong>Marketplace Fees:</strong> Platform fees from all sales
+                    (admin only)
+                  </li>
+                )}
+              </ul>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

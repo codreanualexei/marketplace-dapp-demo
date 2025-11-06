@@ -4,7 +4,6 @@ import { useToast } from "../contexts/ToastContext";
 import { useMarketplaceSDK } from "../hooks/useMarketplaceSDK";
 import { ListedToken } from "../sdk/MarketplaceSDK";
 import { NETWORK_CONFIG } from "../config/network";
-import { ethers } from "ethers";
 import Pagination from "../Components/Pagination";
 import { useNFTMetadata, getTokenURI } from "../hooks/useNFTMetadata";
 import { NFTMetadataDisplay } from "../Components/NFTMetadata";
@@ -112,12 +111,13 @@ const Marketplace: React.FC = () => {
   const { sdk, isLoading: sdkLoading, error: sdkError } = useMarketplaceSDK();
   const [listedDomains, setListedDomains] = useState<ListedToken[]>([]);
   const [totalListings, setTotalListings] = useState(0);
-  const [isLoadingCount, setIsLoadingCount] = useState(true);
+  const [isLoadingCount, setIsLoadingCount] = useState(false);
   const [isLoadingPage, setIsLoadingPage] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [buyingListingId, setBuyingListingId] = useState<number | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [loadedDomainsCount, setLoadedDomainsCount] = useState(0);
+  const [isAwaitingSignature, setIsAwaitingSignature] = useState(false);
   
   // Use refs to track loading states and prevent infinite loops
   const isLoadingCountRef = useRef(false);
@@ -125,13 +125,14 @@ const Marketplace: React.FC = () => {
   const hasLoadedCountRef = useRef(false);
   const isLoadingIndividualRef = useRef(false);
 
+  // Load count in the background (non-blocking, for stats display only)
   const loadTotalCount = useCallback(async () => {
     if (!sdk || isLoadingCountRef.current) return;
 
     isLoadingCountRef.current = true;
     setIsLoadingCount(true);
     try {
-      console.log("Loading total listing count efficiently...");
+      console.log("Loading total listing count in background...");
       const startTime = Date.now();
       
       // Get just the count without loading all listings
@@ -141,20 +142,12 @@ const Marketplace: React.FC = () => {
       console.log(`Loaded listing count in ${endTime - startTime}ms:`, count);
       console.log(`Total active listings in marketplace: ${count}`);
 
+      // Update the count - this will cause the UI to update from 0 to the real number
       setTotalListings(count);
-      // Don't set allListingIds here - we'll fetch them page by page
-      setCurrentPage(1);
       hasLoadedCountRef.current = true;
-      
-      // Load the first page after count is loaded
-      setTimeout(() => {
-        if (!isLoadingPageRef.current) {
-          loadCurrentPage();
-        }
-      }, 100);
     } catch (err: any) {
       console.error("Error loading count:", err);
-      setError("Failed to load listing count");
+      // Don't set error for count - it's optional, keep showing 0
     } finally {
       setIsLoadingCount(false);
       isLoadingCountRef.current = false;
@@ -178,68 +171,32 @@ const Marketplace: React.FC = () => {
       console.log(`Loading page ${currentPage} efficiently (${ITEMS_PER_PAGE} items)...`);
       const startTime = Date.now();
       
-      // Use the SDK's optimized page method to get only what we need
+      // Use the SDK's optimized page method to get only what we need (single subgraph query)
       const pageListings = await sdk.getActiveListingsPageOptimized(currentPage, ITEMS_PER_PAGE);
       
       console.log(`SDK returned ${pageListings.length} listings for page ${currentPage}:`, pageListings.map(l => l.listingId));
 
-      // Load listings one by one with a small delay for visual effect
-      const loadedDomains: ListedToken[] = [];
+      // The subgraph already returns tokenData with listings, so we can use them directly
+      // Filter out invalid listings and use the data as-is
+      const validListings = pageListings.filter(listing => 
+        listing && listing.active && listing.seller && listing.strCollectionAddress && listing.tokenData
+      );
       
-      for (let i = 0; i < pageListings.length; i++) {
-        const listing = pageListings[i];
-        
-        try {
-          if (listing && listing.active && listing.seller && listing.strCollectionAddress) {
-            // Get token data (with caching)
-            const tokenData = await sdk.getTokenData(Number(listing.tokenId));
-            
-            // Debug: Log the tokenData to see what we're working with
-            console.log(`Token ${listing.tokenId} tokenData:`, tokenData);
-            console.log(`Token ${listing.tokenId} uri:`, tokenData?.uri);
-            console.log(`Token ${listing.tokenId} listing data:`, {
-              seller: listing.seller,
-              price: listing.price,
-              active: listing.active,
-              strCollectionAddress: listing.strCollectionAddress
-            });
-            
-            // Log cache stats periodically
-            if (i === 0) {
-              const cacheStats = sdk.getCacheStats();
-              console.log(`Cache stats:`, cacheStats);
-            }
-            
-            // Create the ListedToken object with proper null checks
-            const listedToken: ListedToken = {
-              listingId: listing.listingId,
-              tokenId: Number(listing.tokenId),
-              seller: listing.seller || '0x0000000000000000000000000000000000000000', // Fallback to zero address
-              price: listing.price || '0',
-              active: listing.active || false,
-              strCollectionAddress: listing.strCollectionAddress || '0x0000000000000000000000000000000000000000', // Fallback to zero address
-              tokenData: tokenData
-            };
-            
-            loadedDomains.push(listedToken);
-            setListedDomains([...loadedDomains]);
-            setLoadedDomainsCount(loadedDomains.length);
-            
-            // Small delay to show progressive loading effect
-            if (i < pageListings.length - 1) {
-              await new Promise(resolve => setTimeout(resolve, 200));
-            }
-          } else {
-            console.warn(`Listing ${listing.listingId} is invalid or inactive:`, listing);
-          }
-        } catch (err) {
-          console.warn(`Failed to process listing ${listing.listingId}:`, err);
-        }
+      console.log(`Found ${validListings.length} valid listings out of ${pageListings.length} total`);
+      
+      // Set all listings at once (no need for progressive loading since subgraph is fast)
+      setListedDomains(validListings);
+      setLoadedDomainsCount(validListings.length);
+      
+      // If this is the first page and we haven't loaded count yet, load it in the background
+      if (currentPage === 1 && !hasLoadedCountRef.current) {
+        // Load count in background (non-blocking)
+        loadTotalCount();
       }
       
       const endTime = Date.now();
-      console.log(`Loaded page ${currentPage} in ${endTime - startTime}ms:`, loadedDomains);
-      console.log(`Found ${loadedDomains.length} active listings on page ${currentPage}`);
+      console.log(`Loaded page ${currentPage} in ${endTime - startTime}ms:`, validListings);
+      console.log(`Found ${validListings.length} active listings on page ${currentPage}`);
 
     } catch (err: any) {
       console.error("Error loading marketplace:", err);
@@ -248,7 +205,7 @@ const Marketplace: React.FC = () => {
       setIsLoadingPage(false);
       isLoadingPageRef.current = false;
     }
-  }, [sdk, currentPage]);
+  }, [sdk, currentPage, loadTotalCount]);
 
   // Reset marketplace data when SDK changes (but not when wallet changes)
   useEffect(() => {
@@ -258,7 +215,7 @@ const Marketplace: React.FC = () => {
       setTotalListings(0);
       setCurrentPage(1);
       setError(null);
-      setIsLoadingCount(true);
+      setIsLoadingCount(false);
       setIsLoadingPage(false);
       setLoadedDomainsCount(0);
       // Reset refs
@@ -269,22 +226,19 @@ const Marketplace: React.FC = () => {
     }
   }, [sdk]);
 
-  // Load total active count first - only run once when SDK is available (no account required)
+  // Load first page when SDK is available (single query optimization)
+  // This is the primary data load - count will be loaded in background
   useEffect(() => {
-    if (sdk && !hasLoadedCountRef.current && !isLoadingCountRef.current) {
-      console.log("Marketplace: SDK available, loading total count");
-      loadTotalCount();
-    } else if (!sdk) {
-      console.log("Marketplace: SDK not available");
-      setIsLoadingCount(false);
+    if (sdk && !isLoadingPageRef.current && currentPage === 1 && listedDomains.length === 0) {
+      console.log("Marketplace: SDK available, loading first page (single query)");
+      loadCurrentPage();
     }
-  }, [sdk]); // Removed account dependency
+  }, [sdk, currentPage, listedDomains.length, loadCurrentPage]);
 
-  // Load page data when page changes
+  // Load page when currentPage changes (but not on initial load)
   useEffect(() => {
-    console.log(`useEffect triggered - sdk: ${!!sdk}, hasLoadedCount: ${hasLoadedCountRef.current}, isLoadingPage: ${isLoadingPageRef.current}, currentPage: ${currentPage}`);
-    if (sdk && hasLoadedCountRef.current && !isLoadingPageRef.current) {
-      console.log("Loading current page from useEffect...");
+    if (sdk && currentPage > 1 && !isLoadingPageRef.current) {
+      console.log("Marketplace: Loading page", currentPage);
       loadCurrentPage();
     }
   }, [sdk, currentPage, loadCurrentPage]);
@@ -302,10 +256,12 @@ const Marketplace: React.FC = () => {
     if (!confirmed) return;
 
     setBuyingListingId(listing.listingId);
+    setIsAwaitingSignature(true);
 
     try {
       console.log(`Starting purchase for listing ${listing.listingId}...`);
       const txHash = await sdk.buyToken(listing.listingId);
+      setIsAwaitingSignature(false);
 
       if (txHash) {
         console.log(`Purchase successful! Transaction: ${txHash}`);
@@ -360,6 +316,7 @@ const Marketplace: React.FC = () => {
       }
       
       showError("Purchase Failed", errorMessage);
+      setIsAwaitingSignature(false);
     } finally {
       setBuyingListingId(null);
     }
@@ -377,6 +334,9 @@ const Marketplace: React.FC = () => {
   };
 
   // Pagination logic
+  // Show loading until page loads OR awaiting signature
+  const isFullyLoading = isLoadingPage || isAwaitingSignature;
+  
   const totalPages = Math.ceil(totalListings / ITEMS_PER_PAGE);
 
   const handlePageChange = (page: number) => {
@@ -389,7 +349,7 @@ const Marketplace: React.FC = () => {
       <div className="marketplace">
         <div className="loading">
           <div className="spinner"></div>
-          <p>Initializing Alchemy SDK...</p>
+          <p>Initializing SDK...</p>
         </div>
       </div>
     );
@@ -419,24 +379,7 @@ const Marketplace: React.FC = () => {
     );
   }
 
-
-  if (error) {
-    return (
-      <div className="marketplace">
-        <div className="error-message">
-          <p>{error}</p>
-          <button
-            onClick={() => {
-              loadTotalCount();
-              loadCurrentPage();
-            }}
-          >
-            Try Again
-          </button>
-        </div>
-      </div>
-    );
-  }
+  // Error is shown as a banner, not blocking the page
 
   return (
     <div className="marketplace">
@@ -446,71 +389,72 @@ const Marketplace: React.FC = () => {
           <p>Discover and buy domain NFTs</p>
         </div>
 
+        {error && (
+          <div className="error-banner">
+            <p>{error}</p>
+            <button
+              onClick={() => {
+                setError(null);
+                setCurrentPage(1);
+                setListedDomains([]);
+                loadCurrentPage();
+              }}
+            >
+              Try Again
+            </button>
+          </div>
+        )}
+
         <div className="marketplace-controls">
           <button
             className="refresh-button"
             onClick={() => {
               // Reset loading states
               hasLoadedCountRef.current = false;
-              setIsLoadingCount(true);
-              setIsLoadingPage(false);
+              setCurrentPage(1);
+              setListedDomains([]);
               setError(null);
               setLoadedDomainsCount(0);
-              // Reload data
-              loadTotalCount();
+              // Reload current page
+              loadCurrentPage();
             }}
+            disabled={isLoadingPage}
           >
-            🔄 Refresh
+            {isLoadingPage ? "Loading..." : "🔄 Refresh"}
           </button>
         </div>
 
-        {!isLoadingCount && totalListings === 0 ? (
+        {/* Show stats card only when not awaiting signature */}
+        {!isAwaitingSignature && (
+          <div className="marketplace-stats">
+            <div className="stat-card">
+              <span className="stat-value">{totalListings}</span>
+              <span className="stat-label">Active Listings</span>
+              {isLoadingCount && <small style={{ fontSize: '12px', color: '#666' }}> (updating...)</small>}
+            </div>
+          </div>
+        )}
+
+        {/* Show loading screen until page data is fully loaded OR awaiting signature */}
+        {isFullyLoading ? (
+          <div className="loading-overlay">
+            <div className="loading">
+              <div className="spinner"></div>
+              <p>
+                {isAwaitingSignature 
+                  ? "Waiting for your signature..." 
+                  : "Loading marketplace listings..."}
+              </p>
+            </div>
+          </div>
+        ) : listedDomains.length === 0 ? (
           <div className="empty-state">
             <h3>No listings found</h3>
             <p>The marketplace is empty. Be the first to list a domain!</p>
           </div>
         ) : (
           <>
-            {!isLoadingCount && (
-              <div className="marketplace-stats">
-                <div className="stat-card">
-                  <span className="stat-value">{totalListings}</span>
-                  <span className="stat-label">Active Listings</span>
-                </div>
-              </div>
-            )}
-
             <div className="nft-grid">
-              {/* Show loading card when loading count */}
-              {isLoadingCount && (
-                <div className="nft-card loading-card">
-                  <div className="nft-card-image">
-                    <div className="loading-placeholder">
-                      <div className="spinner"></div>
-                    </div>
-                  </div>
-                  <div className="nft-card-content">
-                    <div className="nft-card-header">
-                      <div className="loading-text"></div>
-                    </div>
-                    <div className="nft-info">
-                      <div className="info-row">
-                        <div className="loading-bar"></div>
-                      </div>
-                      <div className="info-row">
-                        <div className="loading-bar"></div>
-                      </div>
-                      <div className="info-row">
-                        <div className="loading-bar"></div>
-                      </div>
-                    </div>
-                    <div className="nft-card-footer">
-                      <div className="loading-button"></div>
-                    </div>
-                  </div>
-                </div>
-              )}
-              
               {listedDomains.map((listing) => {
                 const tokenURI = getTokenURI(listing.tokenData);
                 return <MarketplaceCard
@@ -524,39 +468,10 @@ const Marketplace: React.FC = () => {
                   formatAddress={formatAddress}
                 />;
               })}
-              
-              {/* Loading card - show when page is loading */}
-              {isLoadingPage && (
-                <div className="nft-card loading-card">
-                  <div className="nft-card-image">
-                    <div className="loading-placeholder">
-                      <div className="spinner"></div>
-                    </div>
-                  </div>
-                  <div className="nft-card-content">
-                    <div className="nft-card-header">
-                      <div className="loading-text"></div>
-                    </div>
-                    <div className="nft-info">
-                      <div className="info-row">
-                        <div className="loading-bar"></div>
-                      </div>
-                      <div className="info-row">
-                        <div className="loading-bar"></div>
-                      </div>
-                      <div className="info-row">
-                        <div className="loading-bar"></div>
-                      </div>
-                    </div>
-                    <div className="nft-card-footer">
-                      <div className="loading-button"></div>
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
 
-            {!isLoadingCount && totalPages > 1 && (
+            {/* Show pagination only when page is loaded and we have count */}
+            {!isLoadingPage && totalPages > 1 && (
               <Pagination
                 currentPage={currentPage}
                 totalPages={totalPages}

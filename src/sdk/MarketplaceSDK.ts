@@ -1,5 +1,5 @@
 import { ethers } from "ethers";
-import { AlchemyService, AlchemyFormattedToken, AlchemyListedToken } from "../services/AlchemyService";
+import { SubgraphService, FormattedToken, ListedToken } from "../services/SubgraphService";
 import MarketplaceJSON from "../contracts/abis/Marketplace.json";
 import StrDomainsNFTJSON from "../contracts/abis/StrDomainsNFT.json";
 import RoyaltySplitterJSON from "../contracts/abis/RoyaltySplitter.json";
@@ -11,7 +11,7 @@ const StrDomainsNFTABI = StrDomainsNFTJSON.abi;
 const RoyaltySplitterABI = RoyaltySplitterJSON.abi;
 
 // Re-export types for compatibility
-export type { AlchemyFormattedToken as FormattedToken, AlchemyListedToken as ListedToken } from "../services/AlchemyService";
+export type { FormattedToken, ListedToken };
 
 
 export interface Listing {
@@ -36,7 +36,7 @@ export class MarketplaceSDK {
   private nftContract: ethers.Contract;
   private marketplaceContractWrite: ethers.Contract; // For write operations
   private nftContractWrite: ethers.Contract; // For write operations
-  private alchemyService: AlchemyService;
+  private subgraphService: SubgraphService;
   private develop: boolean;
   public collectionCountTokens?: number;
   private cachedActiveListingCount?: number;
@@ -45,7 +45,7 @@ export class MarketplaceSDK {
     signer: ethers.Signer,
     marketplaceAddress: string,
     nftAddress: string,
-    alchemyApiKey: string,
+    subgraphUrl: string,
     develop: boolean = false,
   ) {
     this.develop = develop;
@@ -64,38 +64,24 @@ export class MarketplaceSDK {
     this.marketplaceAddress = marketplaceAddress;
     this.nftAddress = nftAddress;
 
-    // Initialize Alchemy service first to get the provider
-    // Get chainId from the provider or use configured default
-    let chainId = NETWORK_CONFIG.chainId;
-    try {
-      // Try to get chainId from provider if available
-      if (this.provider && 'network' in this.provider) {
-        chainId = Number((this.provider as any).network?.chainId) || NETWORK_CONFIG.chainId;
-      }
-    } catch (error) {
-      console.warn('Could not get chainId from provider, using configured default:', error);
-    }
-    this.alchemyService = new AlchemyService(
-      alchemyApiKey,
+    // Initialize Subgraph service
+    this.subgraphService = new SubgraphService(
+      subgraphUrl,
       nftAddress,
-      marketplaceAddress,
-      Number(chainId)
+      marketplaceAddress
     );
 
-    // Create contract instances using Alchemy provider for read operations
+    // Create contract instances using provider for read operations
     // Use signer only for write operations (transactions)
-    const alchemyProvider = this.alchemyService.getProvider();
-    
-    // For read operations, use Alchemy provider to avoid RPC issues
     this.marketplaceContract = new ethers.Contract(
       marketplaceAddress,
       MarketplaceABI,
-      alchemyProvider,
+      this.provider,
     );
     this.nftContract = new ethers.Contract(
       nftAddress,
       StrDomainsNFTABI,
-      alchemyProvider,
+      this.provider,
     );
 
     // For write operations, use signer (for transactions)
@@ -115,20 +101,17 @@ export class MarketplaceSDK {
   updateSigner(signer: ethers.Signer) {
     this.signer = signer;
     this.provider = signer.provider!;
-
-    // Get Alchemy provider for read operations
-    const alchemyProvider = this.alchemyService.getProvider();
     
-    // For read operations, use Alchemy provider to avoid RPC issues
+    // For read operations, use provider
     this.marketplaceContract = new ethers.Contract(
       this.marketplaceAddress,
       MarketplaceABI,
-      alchemyProvider,
+      this.provider,
     );
     this.nftContract = new ethers.Contract(
       this.nftAddress,
       StrDomainsNFTABI,
-      alchemyProvider,
+      this.provider,
     );
 
     // For write operations, use signer (for transactions) - this is the wallet provider
@@ -149,9 +132,8 @@ export class MarketplaceSDK {
     try {
       this.log(`Starting purchase process for listing ${listingId}...`);
       this.log(`Wallet provider: ${this.signer.provider?.constructor.name || 'Unknown'}`);
-      this.log(`Alchemy provider: ${this.alchemyService.getProvider().constructor.name}`);
       
-      // Get listing details using read contract (Alchemy provider)
+      // Get listing details using read contract
       const listing = await this.marketplaceContract.getListing(listingId);
       const { price, active } = listing;
 
@@ -192,9 +174,8 @@ export class MarketplaceSDK {
         this.warn("Could not fetch royalty info:", royaltyError);
       }
 
-      // Check if user has sufficient balance using Alchemy provider (read operation)
-      const alchemyProvider = this.alchemyService.getProvider();
-      const userBalance = await alchemyProvider.getBalance(userAddress);
+      // Check if user has sufficient balance (read operation)
+      const userBalance = await this.provider.getBalance(userAddress);
       if (userBalance < price) {
         this.error(`Insufficient balance. Required: ${ethers.formatEther(price)} MATIC, Available: ${ethers.formatEther(userBalance)} MATIC`);
         throw new Error(`Insufficient balance. You need ${ethers.formatEther(price)} MATIC but only have ${ethers.formatEther(userBalance)} MATIC.`);
@@ -510,6 +491,63 @@ export class MarketplaceSDK {
     } catch (error: any) {
       this.error(`Error checking approval status for token ${tokenId}:`, error);
       return false;
+    }
+  }
+
+  /**
+   * Batch check approval status for multiple tokens (optimized)
+   * Checks isApprovedForAll once, then only checks individual tokens if needed
+   */
+  async batchCheckTokenApprovals(tokenIds: number[]): Promise<Record<number, boolean>> {
+    try {
+      if (tokenIds.length === 0) {
+        return {};
+      }
+
+      const userAddress = await this.signer.getAddress();
+      const approvalMap: Record<number, boolean> = {};
+
+      // First, check if user has approved all tokens for marketplace (only one call needed)
+      this.log(`Checking isApprovedForAll for ${tokenIds.length} tokens...`);
+      const isApprovedForAll = await this.nftContract.isApprovedForAll(userAddress, this.marketplaceAddress);
+      
+      if (isApprovedForAll) {
+        // If approved for all, all tokens are approved
+        this.log(`User has approved all tokens for marketplace`);
+        tokenIds.forEach(tokenId => {
+          approvalMap[tokenId] = true;
+        });
+        return approvalMap;
+      }
+
+      // If not approved for all, check each token individually in parallel
+      this.log(`Checking individual token approvals for ${tokenIds.length} tokens...`);
+      const approvalPromises = tokenIds.map(async (tokenId) => {
+        try {
+          const currentApproval = await this.nftContract.getApproved(tokenId);
+          const isApproved = currentApproval.toLowerCase() === this.marketplaceAddress.toLowerCase();
+          return { tokenId, isApproved };
+        } catch (error: any) {
+          this.warn(`Error checking approval for token ${tokenId}:`, error);
+          return { tokenId, isApproved: false };
+        }
+      });
+
+      const results = await Promise.all(approvalPromises);
+      results.forEach(({ tokenId, isApproved }) => {
+        approvalMap[tokenId] = isApproved;
+      });
+
+      this.log(`Batch approval check completed for ${tokenIds.length} tokens`);
+      return approvalMap;
+    } catch (error: any) {
+      this.error("Error in batch approval check:", error);
+      // Return all false as fallback
+      const approvalMap: Record<number, boolean> = {};
+      tokenIds.forEach(tokenId => {
+        approvalMap[tokenId] = false;
+      });
+      return approvalMap;
     }
   }
 
@@ -967,7 +1005,7 @@ export class MarketplaceSDK {
     }
   }
 
-  // Get tokenData from collection (enhanced with Alchemy)
+  // Get tokenData from collection (using subgraph)
   async getTokenData(tokenId: number): Promise<any> {
     try {
       // Check cache first
@@ -979,7 +1017,24 @@ export class MarketplaceSDK {
 
       this.log(`Fetching fresh token data for token ${tokenId}...`);
       
-      // Get contract data first
+      // Try to get from subgraph first
+      const subgraphToken = await this.subgraphService.getToken(tokenId);
+      if (subgraphToken) {
+        const formattedData = {
+          ...subgraphToken,
+          tokenId: tokenId
+        };
+        
+        // Cache the subgraph data
+        this.tokenDataCache.set(tokenId, {
+          data: formattedData,
+          timestamp: Date.now()
+        });
+        
+        return formattedData;
+      }
+
+      // Fallback to contract if subgraph doesn't have it
       const contractData = await this.nftContract.getTokenData(tokenId);
       
       // Format contract data into proper object structure
@@ -991,43 +1046,6 @@ export class MarketplaceSDK {
         lastPriceTimestamp: contractData[4].toString(),
         tokenId: tokenId
       };
-      
-      // Try to get Alchemy metadata for enhanced data
-      try {
-        const alchemyMetadata = await this.alchemyService.getTokenMetadata(tokenId);
-        if (alchemyMetadata) {
-          // Debug: Log the Alchemy metadata structure
-          this.log(`Alchemy metadata for token ${tokenId}:`, alchemyMetadata);
-          this.log(`Image object:`, alchemyMetadata.image);
-          this.log(`Raw metadata:`, alchemyMetadata.raw);
-          
-          // Extract image from Alchemy metadata
-          const imageUrl = alchemyMetadata.image?.cachedUrl || 
-                          alchemyMetadata.image?.originalUrl || 
-                          alchemyMetadata.image?.pngUrl ||
-                          alchemyMetadata.image?.url ||
-                          alchemyMetadata.raw?.image;
-          
-          this.log(`Extracted image URL for token ${tokenId}:`, imageUrl);
-          
-          const enhancedData = {
-            ...formattedData,
-            image: imageUrl, // Add image field to the main object
-            metadata: alchemyMetadata
-          };
-          
-          // Cache the enhanced data
-          this.tokenDataCache.set(tokenId, {
-            data: enhancedData,
-            timestamp: Date.now()
-          });
-          
-          return enhancedData;
-        }
-      } catch (alchemyError) {
-        // Alchemy metadata is optional, continue with contract data
-        this.log(`Alchemy metadata not available for token ${tokenId}, using contract data only`);
-      }
       
       // Cache the contract data
       this.tokenDataCache.set(tokenId, {
@@ -1055,22 +1073,20 @@ export class MarketplaceSDK {
     }
   }
 
-  // Get token data from collection (enhanced with Alchemy)
+  // Get token data from collection (using subgraph)
   async getStrDomainFromCollection(
     tokenId: number,
-  ): Promise<AlchemyFormattedToken | null> {
+  ): Promise<FormattedToken | null> {
     try {
-      // Get contract data first (this includes creator address)
-      const data = await this.nftContract.getTokenData(tokenId);
-      
-      // Try to get enhanced metadata from Alchemy
-      let alchemyMetadata = null;
-      try {
-        alchemyMetadata = await this.alchemyService.getTokenMetadata(tokenId);
-      } catch (alchemyError) {
-        // Alchemy metadata is optional, continue with contract data
-        this.log(`Alchemy metadata not available for token ${tokenId}, using contract data only`);
+      // Try to get from subgraph first
+      const subgraphToken = await this.subgraphService.getToken(tokenId);
+      if (subgraphToken) {
+        this.log(`Retrieved token data for #${tokenId} from subgraph - Creator: ${subgraphToken.creator}`);
+        return subgraphToken;
       }
+
+      // Fallback to contract if subgraph doesn't have it
+      const data = await this.nftContract.getTokenData(tokenId);
       
       // Extract best-effort image URL and resolve IPFS
       const resolveIpfs = (url?: string): string | undefined => {
@@ -1081,27 +1097,18 @@ export class MarketplaceSDK {
         }
         return url;
       };
-      const imageUrl = alchemyMetadata?.image?.cachedUrl ||
-        alchemyMetadata?.image?.originalUrl ||
-        (alchemyMetadata as any)?.image?.pngUrl ||
-        (alchemyMetadata as any)?.image?.url ||
-        (alchemyMetadata as any)?.raw?.image ||
-        (alchemyMetadata as any)?.rawMetadata?.image ||
-        (alchemyMetadata as any)?.tokenUri?.gateway ||
-        (alchemyMetadata as any)?.tokenUri?.raw;
 
-      const formattedToken: AlchemyFormattedToken = {
+      const formattedToken: FormattedToken = {
         tokenId: tokenId,
-        creator: data[0], // Creator address from contract
+        creator: data[0],
         mintTimestamp: Number(data[1]),
-        uri: (alchemyMetadata as any)?.tokenUri?.raw || data[2], // Use Alchemy URI if available, otherwise contract URI
+        uri: data[2],
         lastPrice: data[3].toString(),
         lastPriceTimestamp: data[4].toString(),
-        image: resolveIpfs(imageUrl),
-        metadata: alchemyMetadata || undefined,
+        image: resolveIpfs(data[2]),
       };
 
-      this.log(`Retrieved token data for #${tokenId} - Creator: ${data[0]}`);
+      this.log(`Retrieved token data for #${tokenId} from contract - Creator: ${data[0]}`);
       return formattedToken;
     } catch (e: any) {
       // Don't log error, just return null
@@ -1109,60 +1116,19 @@ export class MarketplaceSDK {
     }
   }
 
-  // Fetch all NFTs from the collection that belong to the connected wallet (Alchemy-powered)
-  async getMyDomainsFromCollection(): Promise<AlchemyFormattedToken[]> {
+  // Fetch all NFTs from the collection that belong to the connected wallet (subgraph-powered)
+  async getMyDomainsFromCollection(): Promise<FormattedToken[]> {
     try {
       const myAddress = await this.signer.getAddress();
-      this.log(`Fetching NFTs owned by ${myAddress} using Alchemy...`);
+      this.log(`Fetching NFTs owned by ${myAddress} using subgraph...`);
       
-      // Use Alchemy to get owned NFTs quickly
-      const ownedNFTs = await this.alchemyService.getOwnedNFTs(myAddress);
+      // Use subgraph to get owned NFTs
+      const ownedNFTs = await this.subgraphService.getOwnedNFTs(myAddress);
       
-      // Enhance with contract data for missing fields
-      const enhancedNFTs: AlchemyFormattedToken[] = [];
-      
-      for (const nft of ownedNFTs) {
-        try {
-          // Get contract-specific data including creator address
-          const contractData = await this.nftContract.getTokenData(nft.tokenId);
-          
-          const enhancedNFT: AlchemyFormattedToken = {
-            ...nft,
-            creator: contractData[0], // This is the actual creator address from contract
-            mintTimestamp: Number(contractData[1]),
-            uri: nft.uri || contractData[2],
-            lastPrice: contractData[3].toString(),
-            lastPriceTimestamp: contractData[4].toString(),
-          };
-          
-          enhancedNFTs.push(enhancedNFT);
-          this.log(`Enhanced NFT data for token #${nft.tokenId} - Creator: ${contractData[0]}`);
-        } catch (error) {
-          // If contract data fails, use Alchemy data as fallback but try to get creator separately
-          try {
-            const creator = await this.nftContract.creatorOf(nft.tokenId);
-            const enhancedNFT: AlchemyFormattedToken = {
-              ...nft,
-              creator: creator,
-              mintTimestamp: nft.mintTimestamp,
-              uri: nft.uri,
-              lastPrice: nft.lastPrice,
-              lastPriceTimestamp: nft.lastPriceTimestamp,
-            };
-            enhancedNFTs.push(enhancedNFT);
-            this.log(`Enhanced NFT data for token #${nft.tokenId} - Creator: ${creator}`);
-          } catch (creatorError) {
-            // Final fallback - use Alchemy data only
-            enhancedNFTs.push(nft);
-            this.warn(`Using Alchemy data only for token #${nft.tokenId} - creator unavailable`);
-          }
-        }
-      }
-
-      this.log(`Found ${enhancedNFTs.length} domains owned by you via Alchemy`);
-      return enhancedNFTs;
+      this.log(`Found ${ownedNFTs.length} domains owned by you via subgraph`);
+      return ownedNFTs;
     } catch (error: any) {
-      this.error("Error fetching owned NFTs via Alchemy, falling back to contract:", error);
+      this.error("Error fetching owned NFTs via subgraph, falling back to contract:", error);
       
       // Fallback to original contract-based method
       return await this.getMyDomainsFromCollectionFallback();
@@ -1170,8 +1136,8 @@ export class MarketplaceSDK {
   }
 
   // Fallback method using contract calls (original implementation)
-  private async getMyDomainsFromCollectionFallback(): Promise<AlchemyFormattedToken[]> {
-    const myTokenList: AlchemyFormattedToken[] = [];
+  private async getMyDomainsFromCollectionFallback(): Promise<FormattedToken[]> {
+    const myTokenList: FormattedToken[] = [];
     let tokenId = 1;
     let consecutiveFailures = 0;
     const MAX_CONSECUTIVE_FAILURES = 3;
@@ -1233,52 +1199,47 @@ export class MarketplaceSDK {
     return myTokenList;
   }
 
-  // Get all NFTs from collection (Alchemy-powered)
-  async getAllStrDomainsFromCollection(): Promise<AlchemyFormattedToken[]> {
+  // Get all NFTs from collection (subgraph-powered)
+  async getAllStrDomainsFromCollection(): Promise<FormattedToken[]> {
     try {
-      this.log("Fetching all collection NFTs using Alchemy...");
+      this.log("Fetching all collection NFTs using subgraph...");
       
-      // Use Alchemy to get all NFTs quickly
-      const allNFTs = await this.alchemyService.getAllCollectionNFTs();
+      // Use subgraph to get all NFTs
+      const allNFTs = await this.subgraphService.getAllCollectionNFTs();
       
-      // Enhance with contract data
-      const enhancedNFTs: AlchemyFormattedToken[] = [];
-      
-      for (const nft of allNFTs) {
-        try {
-          // Get contract-specific data
-          const contractData = await this.nftContract.getTokenData(nft.tokenId);
-          
-          const enhancedNFT: AlchemyFormattedToken = {
-            ...nft,
-            creator: contractData[0],
-            mintTimestamp: Number(contractData[1]),
-            uri: nft.uri || contractData[2],
-            lastPrice: contractData[3].toString(),
-            lastPriceTimestamp: contractData[4].toString(),
-          };
-          
-          enhancedNFTs.push(enhancedNFT);
-        } catch (error) {
-          // If contract data fails, use Alchemy data as fallback
-          enhancedNFTs.push(nft);
-        }
-      }
-
-      this.collectionCountTokens = enhancedNFTs.length;
-      this.log(`Found ${enhancedNFTs.length} tokens in collection via Alchemy`);
-      return enhancedNFTs;
+      this.collectionCountTokens = allNFTs.length;
+      this.log(`Found ${allNFTs.length} tokens in collection via subgraph`);
+      return allNFTs;
     } catch (error: any) {
-      this.error("Error fetching collection NFTs via Alchemy, falling back to contract:", error);
+      this.error("Error fetching collection NFTs via subgraph, falling back to contract:", error);
       
       // Fallback to original contract-based method
       return await this.getAllStrDomainsFromCollectionFallback();
     }
   }
 
+  // Get tokens created by a specific address (subgraph-powered)
+  async getCreatedTokens(creatorAddress: string): Promise<FormattedToken[]> {
+    try {
+      this.log(`Fetching tokens created by ${creatorAddress} using subgraph...`);
+      
+      // Use subgraph to get created tokens (includes splitter data)
+      const createdTokens = await this.subgraphService.getCreatedTokens(creatorAddress);
+      
+      this.log(`Found ${createdTokens.length} tokens created by ${creatorAddress} via subgraph`);
+      return createdTokens;
+    } catch (error: any) {
+      this.error("Error fetching created tokens via subgraph, falling back to contract:", error);
+      
+      // Fallback: get all tokens and filter
+      const allTokens = await this.getAllStrDomainsFromCollection();
+      return allTokens.filter(token => token.creator.toLowerCase() === creatorAddress.toLowerCase());
+    }
+  }
+
   // Fallback method using contract calls (original implementation)
-  private async getAllStrDomainsFromCollectionFallback(): Promise<AlchemyFormattedToken[]> {
-    const tokenList: AlchemyFormattedToken[] = [];
+  private async getAllStrDomainsFromCollectionFallback(): Promise<FormattedToken[]> {
+    const tokenList: FormattedToken[] = [];
     let tokenId = 1;
     let consecutiveFailures = 0;
     const MAX_CONSECUTIVE_FAILURES = 3;
@@ -1359,8 +1320,8 @@ export class MarketplaceSDK {
   async getActiveListingsPage(
     page: number,
     perPage: number,
-  ): Promise<AlchemyListedToken[]> {
-    const results: AlchemyListedToken[] = [];
+  ): Promise<ListedToken[]> {
+    const results: ListedToken[] = [];
     try {
       const lastId = await this.getListingCount();
       if (lastId === 0) return results;
@@ -1775,87 +1736,27 @@ export class MarketplaceSDK {
   }
 
   /**
-   * OPTIMIZED: Get splitter balances using batch processing
+   * Get splitter balances using subgraph
    */
   async getSplitterBalanceOfWallet(
     walletAddress: string,
   ): Promise<SplitterBalance[]> {
-    const balances: SplitterBalance[] = [];
-
     try {
-      this.log(`Fetching splitter balances for ${walletAddress} using OPTIMIZED method...`);
+      this.log(`Fetching splitter balances for ${walletAddress} using subgraph...`);
       const startTime = Date.now();
 
-      // Get splitter addresses using optimized method
-      const splitterAddresses = await this.getSplitterAddressesOptimized();
-
-      if (!splitterAddresses || splitterAddresses.length === 0) {
-        this.warn("No splitter contracts found in collection.");
-        return balances;
-      }
-
-      this.log(`Checking balances for ${splitterAddresses.length} splitters...`);
-
-      // Use Alchemy provider for read operations
-      const alchemyProvider = this.alchemyService.getProvider();
-
-      // Process splitters in chunks for better performance
-      const chunkSize = 10;
-      const chunks = [];
-      for (let i = 0; i < splitterAddresses.length; i += chunkSize) {
-        chunks.push(splitterAddresses.slice(i, i + chunkSize));
-      }
-
-      // Process chunks in parallel
-      for (const chunk of chunks) {
-        try {
-          const balancePromises = chunk.map(async (splitterAddress) => {
-            try {
-              const contract = new ethers.Contract(
-                splitterAddress,
-                RoyaltySplitterABI,
-                alchemyProvider,
-              );
-              const rawBalance = await contract.ethBalance(walletAddress);
-              const balance = ethers.formatEther(rawBalance);
-
-              if (rawBalance > 0n) {
-                return {
-                  splitter: splitterAddress,
-                  balance,
-                };
-              }
-              return null;
-            } catch (innerErr: any) {
-              this.warn(`Failed to fetch balance from splitter: ${splitterAddress}`, innerErr.message);
-              return null;
-            }
-          });
-
-          const chunkResults = await Promise.all(balancePromises);
-          chunkResults.forEach(result => {
-            if (result) {
-              balances.push(result);
-              this.log(`Found balance in splitter ${result.splitter}: ${result.balance} MATIC`);
-            }
-          });
-
-          // Small delay between chunks
-          if (chunks.length > 1) {
-            await new Promise(resolve => setTimeout(resolve, 30));
-          }
-        } catch (error) {
-          this.warn(`Error processing splitter chunk:`, error);
-        }
-      }
+      // Use subgraph to get splitter balances
+      const balances = await this.subgraphService.getSplitterBalances(walletAddress);
 
       const endTime = Date.now();
-      this.log(`OPTIMIZED: Completed splitter balance check in ${endTime - startTime}ms. Found ${balances.length} splitters with balances.`);
+      this.log(`Subgraph fetch completed: Found ${balances.length} splitters with balances in ${endTime - startTime}ms.`);
+      
+      return balances;
     } catch (error: any) {
-      this.error("Error fetching splitter balances:", error);
+      this.error("Error fetching splitter balances from subgraph:", error);
+      // Fallback to empty array
+      return [];
     }
-
-    return balances;
   }
 
   // Withdraw royalty from a specific splitter
@@ -2489,7 +2390,7 @@ export class MarketplaceSDK {
   /**
    * Get multiple listings in a single batch call using multicall (much faster than individual calls)
    */
-  async getListingsBatch(listingIds: number[]): Promise<AlchemyListedToken[]> {
+  async getListingsBatch(listingIds: number[]): Promise<ListedToken[]> {
     if (listingIds.length === 0) return [];
 
     try {
@@ -2512,7 +2413,7 @@ export class MarketplaceSDK {
       listings = await Promise.all(listingPromises);
 
       // Process listings and fetch token data
-      const processedListings: AlchemyListedToken[] = [];
+      const processedListings: ListedToken[] = [];
       
       for (let i = 0; i < listings.length; i++) {
         const listing = listings[i];
@@ -2532,7 +2433,7 @@ export class MarketplaceSDK {
             active: listing.active,
             strCollectionAddress: this.nftAddress,
             tokenData: tokenData || undefined
-          } as AlchemyListedToken);
+          } as ListedToken);
         } catch (error) {
           this.warn(`Failed to process listing ${listingId}:`, error);
         }
@@ -2549,106 +2450,50 @@ export class MarketplaceSDK {
   }
 
   /**
-   * Optimized method to get all active listings using batch operations
+   * Optimized method to get all active listings using subgraph
    */
-  async getAllActiveListingsOptimized(): Promise<AlchemyListedToken[]> {
+  async getAllActiveListingsOptimized(): Promise<ListedToken[]> {
     try {
-      this.log("Fetching all active listings with optimized batch method...");
+      this.log("Fetching all active listings from subgraph...");
       const startTime = Date.now();
 
-      // Get the last listing ID
-      let lastListingId: number = 0;
-      try {
-        const result = await this.marketplaceContract.lastListingId();
-        lastListingId = Number(result);
-      } catch (error: any) {
-        this.warn("Could not get lastListingId, falling back to scanning");
-        return await this.scanForListings(true);
-      }
-
-      if (lastListingId === 0) {
-        this.log("No listings found");
-        return [];
-      }
-
-      // Create array of all listing IDs
-      const allListingIds = Array.from({ length: lastListingId }, (_, i) => i + 1);
-      
-      // Process in chunks to avoid overwhelming the RPC
-      const chunkSize = 20; // Process 20 listings at a time
-      const chunks = [];
-      for (let i = 0; i < allListingIds.length; i += chunkSize) {
-        chunks.push(allListingIds.slice(i, i + chunkSize));
-      }
-
-      this.log(`Processing ${allListingIds.length} listings in ${chunks.length} chunks of ${chunkSize}`);
-
-      // Process chunks sequentially to avoid rate limiting
-      const allListings: AlchemyListedToken[] = [];
-      for (const chunk of chunks) {
-        const chunkListings = await this.getListingsBatch(chunk);
-        allListings.push(...chunkListings);
-        
-        // Small delay between chunks to be nice to the RPC
-        if (chunks.length > 1) {
-          await new Promise(resolve => setTimeout(resolve, 100));
-        }
-      }
+      // Use subgraph to get all active listings
+      const allListings = await this.subgraphService.getActiveListings();
 
       const endTime = Date.now();
-      this.log(`Optimized fetch completed: ${allListings.length} active listings in ${endTime - startTime}ms`);
+      this.log(`Subgraph fetch completed: ${allListings.length} active listings in ${endTime - startTime}ms`);
 
       return allListings;
     } catch (error) {
-      this.error("Error in optimized listings fetch:", error);
-      return [];
+      this.error("Error fetching listings from subgraph, falling back to contract:", error);
+      // Fallback to contract-based method
+      return await this.scanForListings(true);
     }
   }
 
   /**
-   * Get active listings for a specific page with optimized batch fetching
+   * Get active listings for a specific page using subgraph
    */
-  async getActiveListingsPageOptimized(page: number, pageSize: number): Promise<AlchemyListedToken[]> {
+  async getActiveListingsPageOptimized(page: number, pageSize: number): Promise<ListedToken[]> {
     try {
-      this.log(`Fetching page ${page} (${pageSize} items) with optimized method...`);
+      this.log(`Fetching page ${page} (${pageSize} items) from subgraph...`);
       const startTime = Date.now();
 
-      // Get all active listings first, then paginate (with caching)
-      let allActiveListings: AlchemyListedToken[];
-      
-      // Check cache first
-      if (this.activeListingsCache && 
-          Date.now() - this.activeListingsCache.timestamp < this.CACHE_DURATION) {
-        this.log(`Using cached active listings: ${this.activeListingsCache.listings.length} listings`);
-        allActiveListings = this.activeListingsCache.listings;
-      } else {
-        this.log("Fetching fresh active listings...");
-        allActiveListings = await this.getAllActiveListingsOptimized();
-        // Cache the results
-        this.activeListingsCache = {
-          listings: allActiveListings,
-          timestamp: Date.now()
-        };
-      }
-      
-      if (allActiveListings.length === 0) {
-        this.log("No active listings found");
-        return [];
-      }
-
-      // Calculate pagination on active listings
-      const startIndex = (page - 1) * pageSize;
-      const endIndex = startIndex + pageSize;
-      const pageListings = allActiveListings.slice(startIndex, endIndex);
+      // Use subgraph pagination
+      const pageListings = await this.subgraphService.getActiveListingsPage(page, pageSize);
 
       const endTime = Date.now();
-      this.log(`Optimized page fetch completed: ${pageListings.length} listings in ${endTime - startTime}ms`);
-      this.log(`Page ${page}: showing listings ${startIndex + 1}-${Math.min(endIndex, allActiveListings.length)} of ${allActiveListings.length} total active listings`);
+      this.log(`Subgraph page fetch completed: ${pageListings.length} listings in ${endTime - startTime}ms`);
+      this.log(`Page ${page}: showing ${pageListings.length} listings`);
 
       return pageListings;
     } catch (error) {
-      this.error("Error in optimized page fetch:", error);
-      return [];
+      this.error("Error fetching page from subgraph, falling back to contract:", error);
+      // Fallback: get all and paginate manually
+      const allListings = await this.getAllActiveListingsOptimized();
+      const startIndex = (page - 1) * pageSize;
+      const endIndex = startIndex + pageSize;
+      return allListings.slice(startIndex, endIndex);
     }
   }
 
@@ -2656,7 +2501,7 @@ export class MarketplaceSDK {
    * Get listing count with caching to avoid repeated calls
    */
   private listingCountCache: { count: number; timestamp: number } | null = null;
-  private activeListingsCache: { listings: AlchemyListedToken[]; timestamp: number } | null = null;
+  private activeListingsCache: { listings: ListedToken[]; timestamp: number } | null = null;
   private tokenDataCache: Map<number, { data: any; timestamp: number }> = new Map();
   private readonly CACHE_DURATION = 30000; // 30 seconds cache
   private readonly TOKEN_DATA_CACHE_DURATION = 300000; // 5 minutes cache for token data
@@ -2814,36 +2659,11 @@ export class MarketplaceSDK {
         return this.listingCountCache.count;
       }
 
-      this.log("Fetching fresh listing count...");
+      this.log("Fetching fresh listing count from subgraph...");
       const startTime = Date.now();
 
-      let lastListingId: number = 0;
-      try {
-        const result = await this.marketplaceContract.lastListingId();
-        lastListingId = Number(result);
-      } catch (error: any) {
-        this.warn("Could not get lastListingId for count");
-        return 0;
-      }
-
-      // Use the same cache as the page method for consistency
-      let allActiveListings: AlchemyListedToken[];
-      
-      if (this.activeListingsCache && 
-          Date.now() - this.activeListingsCache.timestamp < this.CACHE_DURATION) {
-        this.log(`Using cached active listings for count: ${this.activeListingsCache.listings.length} listings`);
-        allActiveListings = this.activeListingsCache.listings;
-      } else {
-        this.log("Fetching fresh active listings for count...");
-        allActiveListings = await this.getAllActiveListingsOptimized();
-        // Cache the results
-        this.activeListingsCache = {
-          listings: allActiveListings,
-          timestamp: Date.now()
-        };
-      }
-
-      const activeCount = allActiveListings.length;
+      // Use subgraph to get count directly
+      const activeCount = await this.subgraphService.getActiveListingCount();
       const endTime = Date.now();
       this.log(`Counted ${activeCount} active listings in ${endTime - startTime}ms`);
 
@@ -2861,91 +2681,45 @@ export class MarketplaceSDK {
   }
 
   /**
-   * SUPER OPTIMIZED: Get my listings by scanning in batches and filtering early
+   * Get my listings using subgraph
    */
-  async getMyListingsOptimized(): Promise<AlchemyListedToken[]> {
+  async getMyListingsOptimized(): Promise<ListedToken[]> {
     try {
-      this.log("Fetching my listings using SUPER OPTIMIZED batch method...");
+      this.log("Fetching my listings from subgraph...");
       const startTime = Date.now();
 
-      const myAddress = (await this.signer.getAddress()).toLowerCase();
-      let lastListingId: number = 0;
-
-      try {
-        const result = await this.marketplaceContract.lastListingId();
-        lastListingId = Number(result);
-      } catch (error: any) {
-        this.warn("Could not get lastListingId, falling back to scanning");
-        return await this.scanForListings(false);
-      }
-
-      if (lastListingId === 0) {
-        this.log("No listings found");
-        return [];
-      }
-
-      // Create array of all listing IDs
-      const allListingIds = Array.from({ length: lastListingId }, (_, i) => i + 1);
+      const myAddress = await this.signer.getAddress();
       
-      // Process in chunks and filter early for my listings only
-      const chunkSize = 20;
-      const chunks = [];
-      for (let i = 0; i < allListingIds.length; i += chunkSize) {
-        chunks.push(allListingIds.slice(i, i + chunkSize));
-      }
-
-      this.log(`Scanning ${allListingIds.length} listings in ${chunks.length} chunks for my listings`);
-
-      const myListings: AlchemyListedToken[] = [];
-      
-      // Process chunks sequentially to avoid rate limiting
-      for (const chunk of chunks) {
-        try {
-          // Get listings for this chunk
-          const chunkListings = await this.getListingsBatch(chunk);
-          
-          // Filter for my listings only
-          const myChunkListings = chunkListings.filter(
-            (listing: AlchemyListedToken) => listing.seller.toLowerCase() === myAddress
-          );
-          
-          myListings.push(...myChunkListings);
-          
-          // Small delay between chunks
-          if (chunks.length > 1) {
-            await new Promise(resolve => setTimeout(resolve, 50));
-          }
-        } catch (error) {
-          this.warn(`Error processing chunk:`, error);
-        }
-      }
+      // Use subgraph to get listings by seller
+      const myListings = await this.subgraphService.getListingsBySeller(myAddress, true);
 
       const endTime = Date.now();
-      this.log(`SUPER OPTIMIZED: Found ${myListings.length} of my listings in ${endTime - startTime}ms`);
+      this.log(`Subgraph fetch completed: Found ${myListings.length} of my listings in ${endTime - startTime}ms`);
 
       return myListings;
     } catch (error) {
-      this.error("Error in super optimized my listings fetch:", error);
-      return [];
+      this.error("Error fetching my listings from subgraph, falling back to contract:", error);
+      // Fallback to contract-based method
+      return await this.scanForListings(false);
     }
   }
 
   // Get my all listed tokens on marketplace (OPTIMIZED)
   async getMyAllListedDomainsOnMarketplaceWithTokenData(): Promise<
-    AlchemyListedToken[]
+    ListedToken[]
   > {
-    // Use the super optimized method
+    // Use the subgraph method
     return await this.getMyListingsOptimized();
   }
 
 
-  // Scan for listings (Alchemy-enhanced)
-  private async scanForListings(activeOnly: boolean): Promise<AlchemyListedToken[]> {
-    const listings: AlchemyListedToken[] = [];
+  // Scan for listings (fallback method using contract)
+  private async scanForListings(activeOnly: boolean): Promise<ListedToken[]> {
+    const listings: ListedToken[] = [];
     let listingId = 1;
 
     try {
-      this.log(`Scanning for listings (activeOnly: ${activeOnly}) using Alchemy provider...`);
+      this.log(`Scanning for listings (activeOnly: ${activeOnly}) using contract...`);
       
       while (true) {
         try {
@@ -2953,8 +2727,8 @@ export class MarketplaceSDK {
           if (!listing) break;
 
           if (!activeOnly || listing.active) {
-            // Convert Listing to AlchemyListedToken
-            const alchemyListing: AlchemyListedToken = {
+            // Convert Listing to ListedToken
+            const listedToken: ListedToken = {
               listingId: listingId,
               tokenId: Number(listing.tokenId),
               seller: listing.seller,
@@ -2963,7 +2737,7 @@ export class MarketplaceSDK {
               strCollectionAddress: this.nftAddress,
               tokenData: await this.getStrDomainFromCollection(Number(listing.tokenId)) || undefined
             };
-            listings.push(alchemyListing);
+            listings.push(listedToken);
           }
           listingId++;
         } catch (error: any) {
