@@ -143,6 +143,9 @@
 
 .nft-card-content {
   padding: 20px;
+  min-height: 200px;
+  display: flex;
+  flex-direction: column;
 }
 
 .nft-card-header {

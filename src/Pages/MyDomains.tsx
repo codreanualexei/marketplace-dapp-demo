@@ -5,9 +5,150 @@ import { useMarketplaceSDK } from "../hooks/useMarketplaceSDK";
 import { FormattedToken } from "../sdk/MarketplaceSDK";
 import { NETWORK_CONFIG } from "../config/network";
 import Pagination from "../Components/Pagination";
+import { useNFTMetadata, getTokenURI } from "../hooks/useNFTMetadata";
+import { NFTMetadataDisplay } from "../Components/NFTMetadata";
 import "./MyDomains.css";
 
 const ITEMS_PER_PAGE = 12;
+
+// Domain card component with metadata
+const DomainCard: React.FC<{
+  domain: FormattedToken;
+  tokenURI: string | null;
+  listingTokenId: number | null;
+  listPrice: string;
+  setListPrice: (price: string) => void;
+  handleCancelList: () => void;
+  handleConfirmList: (tokenId: number) => void;
+  isLoading: boolean;
+  checkingApproval: Record<number, boolean>;
+  tokenApprovalStatus: Record<number, boolean>;
+  handleApprove: (tokenId: number) => void;
+  handleListForSale: (tokenId: number) => void;
+  formatAddress: (address: string) => string;
+}> = ({ domain, tokenURI, listingTokenId, listPrice, setListPrice, handleCancelList, handleConfirmList, isLoading, checkingApproval, tokenApprovalStatus, handleApprove, handleListForSale, formatAddress }) => {
+  const { metadata, isLoading: metadataLoading } = useNFTMetadata(tokenURI);
+  
+  const imageSrc = metadata?.image || domain.image || domain.uri ||
+    `https://via.placeholder.com/400x400/667eea/ffffff?text=Domain+${domain.tokenId}`;
+
+  return (
+    <div className="nft-card">
+      <div className="nft-card-image">
+        <img
+          src={imageSrc}
+          alt={metadata?.name || `Domain #${domain.tokenId}`}
+          onError={(e) => {
+            e.currentTarget.src = `https://via.placeholder.com/400x400/667eea/ffffff?text=Domain+${domain.tokenId}`;
+          }}
+        />
+      </div>
+
+      <div className="nft-card-content">
+        <div className="nft-card-header">
+          <h3 className="nft-card-title">
+            {metadata?.name || `Domain #${domain.tokenId}`}
+          </h3>
+        </div>
+
+        <NFTMetadataDisplay 
+          metadata={metadata} 
+          isLoading={metadataLoading}
+          fallbackName={`Domain #${domain.tokenId}`}
+        />
+
+        <div className="nft-info">
+          <div className="info-row">
+            <span className="label">Creator:</span>
+            <span className="value">
+              {formatAddress(domain.creator)}
+            </span>
+          </div>
+          {domain.lastPrice !== "0" && (
+            <div className="info-row">
+              <span className="label">Last Price:</span>
+              <span className="value price">
+                {(Number(domain.lastPrice) / 1e18).toFixed(4)} {NETWORK_CONFIG.nativeCurrency.symbol}
+              </span>
+            </div>
+          )}
+          <div className="info-row">
+            <span className="label">Minted:</span>
+            <span className="value">
+              {new Date(
+                domain.mintTimestamp * 1000,
+              ).toLocaleDateString()}
+            </span>
+          </div>
+          <div className="info-row">
+            <span className="label">Status:</span>
+            <span className={`value status ${checkingApproval[domain.tokenId] ? 'checking' : tokenApprovalStatus[domain.tokenId] ? 'approved' : 'not-approved'}`}>
+              {checkingApproval[domain.tokenId] 
+                ? "Checking..." 
+                : tokenApprovalStatus[domain.tokenId] 
+                  ? "Approved for Sale" 
+                  : "Not Approved"
+              }
+            </span>
+          </div>
+        </div>
+
+        {listingTokenId === domain.tokenId ? (
+          <div className="listing-form">
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              placeholder={`Price in ${NETWORK_CONFIG.nativeCurrency.symbol}`}
+              value={listPrice}
+              onChange={(e) => setListPrice(e.target.value)}
+              className="price-input"
+            />
+            <div className="form-actions">
+              <button
+                className="action-button secondary"
+                onClick={handleCancelList}
+              >
+                Cancel
+              </button>
+              <button
+                className="action-button primary"
+                onClick={() => handleConfirmList(domain.tokenId)}
+                disabled={!listPrice || isLoading}
+              >
+                {isLoading ? "Listing..." : "List"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="nft-card-footer">
+            {checkingApproval[domain.tokenId] ? (
+              <button className="action-button secondary" disabled>
+                Checking...
+              </button>
+            ) : tokenApprovalStatus[domain.tokenId] ? (
+              <button
+                className="action-button primary"
+                onClick={() => handleListForSale(domain.tokenId)}
+                disabled={isLoading}
+              >
+                List for Sale
+              </button>
+            ) : (
+              <button
+                className="action-button secondary"
+                onClick={() => handleApprove(domain.tokenId)}
+                disabled={isLoading}
+              >
+                Approve for Sale
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 const MyDomains: React.FC = () => {
   const { account } = useWallet();
@@ -304,121 +445,25 @@ const MyDomains: React.FC = () => {
             </div>
 
             <div className="nft-grid">
-              {paginatedDomains.map((domain) => (
-                <div key={domain.tokenId} className="nft-card">
-                  <div className="nft-card-image">
-                    <img
-                      src={(() => {
-                        const imageSrc = domain.image ||
-                          domain.uri ||
-                          `https://via.placeholder.com/400x400/667eea/ffffff?text=Domain+${domain.tokenId}`;
-                        return imageSrc;
-                      })()}
-                      alt={`Domain #${domain.tokenId}`}
-                      onError={(e) => {
-                        e.currentTarget.src = `https://via.placeholder.com/400x400/667eea/ffffff?text=Domain+${domain.tokenId}`;
-                      }}
-                    />
-                  </div>
-
-                  <div className="nft-card-content">
-                    <div className="nft-card-header">
-                      <h3 className="nft-card-title">
-                        Domain #{domain.tokenId}
-                      </h3>
-                    </div>
-
-                    <div className="nft-info">
-                      <div className="info-row">
-                        <span className="label">Creator:</span>
-                        <span className="value">
-                          {formatAddress(domain.creator)}
-                        </span>
-                      </div>
-                      {domain.lastPrice !== "0" && (
-                        <div className="info-row">
-                          <span className="label">Last Price:</span>
-                          <span className="value price">
-                            {(Number(domain.lastPrice) / 1e18).toFixed(4)} {NETWORK_CONFIG.nativeCurrency.symbol}
-                          </span>
-                        </div>
-                      )}
-                      <div className="info-row">
-                        <span className="label">Minted:</span>
-                        <span className="value">
-                          {new Date(
-                            domain.mintTimestamp * 1000,
-                          ).toLocaleDateString()}
-                        </span>
-                      </div>
-                      <div className="info-row">
-                        <span className="label">Status:</span>
-                        <span className={`value status ${checkingApproval[domain.tokenId] ? 'checking' : tokenApprovalStatus[domain.tokenId] ? 'approved' : 'not-approved'}`}>
-                          {checkingApproval[domain.tokenId] 
-                            ? "Checking..." 
-                            : tokenApprovalStatus[domain.tokenId] 
-                              ? "Approved for Sale" 
-                              : "Not Approved"
-                          }
-                        </span>
-                      </div>
-                    </div>
-
-                    {listingTokenId === domain.tokenId ? (
-                      <div className="listing-form">
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          placeholder={`Price in ${NETWORK_CONFIG.nativeCurrency.symbol}`}
-                          value={listPrice}
-                          onChange={(e) => setListPrice(e.target.value)}
-                          className="price-input"
-                        />
-                        <div className="form-actions">
-                          <button
-                            className="action-button secondary"
-                            onClick={handleCancelList}
-                          >
-                            Cancel
-                          </button>
-                          <button
-                            className="action-button primary"
-                            onClick={() => handleConfirmList(domain.tokenId)}
-                            disabled={!listPrice || isLoading}
-                          >
-                            {isLoading ? "Listing..." : "List"}
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="nft-card-footer">
-                        {checkingApproval[domain.tokenId] ? (
-                          <button className="action-button secondary" disabled>
-                            Checking...
-                          </button>
-                        ) : tokenApprovalStatus[domain.tokenId] ? (
-                          <button
-                            className="action-button primary"
-                            onClick={() => handleListClick(domain.tokenId)}
-                            disabled={isLoading}
-                          >
-                            List for Sale
-                          </button>
-                        ) : (
-                          <button
-                            className="action-button secondary"
-                            onClick={() => handleApproveToken(domain.tokenId)}
-                            disabled={isLoading}
-                          >
-                            {isLoading ? "Approving..." : "Approve"}
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
+              {paginatedDomains.map((domain) => {
+                const tokenURI = getTokenURI(domain) || domain.uri;
+                return <DomainCard
+                  key={domain.tokenId}
+                  domain={domain}
+                  tokenURI={tokenURI}
+                  listingTokenId={listingTokenId}
+                  listPrice={listPrice}
+                  setListPrice={setListPrice}
+                  handleCancelList={handleCancelList}
+                  handleConfirmList={handleConfirmList}
+                  isLoading={isLoading}
+                  checkingApproval={checkingApproval}
+                  tokenApprovalStatus={tokenApprovalStatus}
+                  handleApprove={handleApproveToken}
+                  handleListForSale={handleListClick}
+                  formatAddress={formatAddress}
+                />;
+              })}
             </div>
 
             <Pagination

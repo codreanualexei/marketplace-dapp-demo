@@ -4,7 +4,103 @@ import { useMarketplaceSDK } from "../hooks/useMarketplaceSDK";
 import { useToast } from "../contexts/ToastContext";
 import { SplitterBalance, FormattedToken } from "../sdk/MarketplaceSDK";
 import { ethers } from "ethers";
+import { useNFTMetadata, getTokenURI } from "../hooks/useNFTMetadata";
+import { NFTMetadataDisplay } from "../Components/NFTMetadata";
 import "./Royalties.css";
+
+// Royalty domain card component with metadata
+const RoyaltyDomainCard: React.FC<{
+  domain: FormattedToken;
+  hasRoyalty: boolean;
+  withdrawing: string | null;
+  handleWithdrawFromSplitter: (splitterAddress: string) => void;
+  formatAddress: (address: string) => string;
+}> = ({ domain, hasRoyalty, withdrawing, handleWithdrawFromSplitter, formatAddress }) => {
+  const tokenURI = getTokenURI(domain) || domain.uri;
+  const { metadata, isLoading: metadataLoading } = useNFTMetadata(tokenURI);
+  
+  const imageSrc = metadata?.image ||
+    domain.image ||
+    domain.uri ||
+    `https://via.placeholder.com/320x280/667eea/ffffff?text=Domain+${domain.tokenId}`;
+
+  return (
+    <div className={`nft-card ${hasRoyalty ? 'has-royalty' : ''}`}>
+      <div className="nft-card-image">
+        <img
+          src={imageSrc}
+          alt={metadata?.name || `Domain #${domain.tokenId || 'Unknown'}`}
+          onError={(e) => {
+            const target = e.target as HTMLImageElement;
+            target.src = `https://via.placeholder.com/320x280/667eea/ffffff?text=Domain+${domain.tokenId}`;
+          }}
+        />
+      </div>
+
+      <div className="nft-card-content">
+        <div className="nft-card-header">
+          <h3 className="nft-card-title">
+            {metadata?.name || `Domain #${domain.tokenId || 'Unknown'}`}
+          </h3>
+          <span className="creator-badge">
+            Creator
+          </span>
+        </div>
+
+        <NFTMetadataDisplay 
+          metadata={metadata} 
+          isLoading={metadataLoading}
+          fallbackName={`Domain #${domain.tokenId || 'Unknown'}`}
+        />
+
+        <div className="nft-info">
+          <div className="info-row">
+            <span className="label">Creator:</span>
+            <span className="value">
+              {formatAddress(domain.creator)}
+            </span>
+          </div>
+          <div className="info-row">
+            <span className="label">Last Sale:</span>
+            <span className="value price">
+              {domain.lastPrice === "0" ? "No sales yet" : `${ethers.formatEther(domain.lastPrice)} MATIC`}
+            </span>
+          </div>
+          <div className="info-row">
+            <span className="label">Minted:</span>
+            <span className="value">
+              {new Date(domain.mintTimestamp * 1000).toLocaleDateString()}
+            </span>
+          </div>
+          {domain.royaltyBalance && (
+            <div className="info-row royalty-row">
+              <span className="label">Royalty Balance:</span>
+              <span className="value price royalty-balance">
+                {domain.royaltyBalance} MATIC
+              </span>
+            </div>
+          )}
+        </div>
+
+        <div className="nft-card-footer">
+          {domain.royaltyBalance && parseFloat(domain.royaltyBalance) > 0 ? (
+            <button 
+              className="action-button primary"
+              onClick={() => handleWithdrawFromSplitter(domain.splitterAddress!)}
+              disabled={withdrawing === domain.splitterAddress}
+            >
+              {withdrawing === domain.splitterAddress ? "Withdrawing..." : "Withdraw Royalties"}
+            </button>
+          ) : (
+            <button className="action-button secondary" disabled>
+              Your Creation
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const Royalties: React.FC = () => {
   const { account } = useWallet();
@@ -389,7 +485,7 @@ const Royalties: React.FC = () => {
             <div className="nft-grid">
               {/* Show loaded domains */}
               {ownedDomains.map((domain, index) => {
-                const hasRoyalty = domain.royaltyBalance && parseFloat(domain.royaltyBalance) > 0;
+                const hasRoyalty = !!(domain.royaltyBalance && parseFloat(domain.royaltyBalance) > 0);
                 const isFirstWithoutRoyalty = !hasRoyalty && index > 0 && 
                   ownedDomains[index - 1].royaltyBalance && 
                   parseFloat(ownedDomains[index - 1].royaltyBalance!) > 0;
@@ -401,83 +497,14 @@ const Royalties: React.FC = () => {
                         <span className="divider-text">Domains without royalties</span>
                       </div>
                     )}
-                    <div className={`nft-card ${hasRoyalty ? 'has-royalty' : ''}`}>
-                  <div className="nft-card-image">
-                    <img
-                      src={(() => {
-                        // Try multiple possible image sources
-                        const imageSrc = domain.image ||
-                          domain.uri ||
-                          `https://via.placeholder.com/320x280/667eea/ffffff?text=Domain+${domain.tokenId}`;
-                        return imageSrc;
-                      })()}
-                      alt={`Domain #${domain.tokenId}`}
-                      onError={(e) => {
-                        const target = e.target as HTMLImageElement;
-                        target.src = `https://via.placeholder.com/320x280/667eea/ffffff?text=Domain+${domain.tokenId}`;
-                      }}
-                      onLoad={() => {
-                        console.log(`Image loaded successfully for domain ${domain.tokenId}`);
-                      }}
+                    <RoyaltyDomainCard
+                      key={domain.tokenId}
+                      domain={domain}
+                      hasRoyalty={hasRoyalty}
+                      withdrawing={withdrawing}
+                      handleWithdrawFromSplitter={handleWithdrawFromSplitter}
+                      formatAddress={formatAddress}
                     />
-                  </div>
-
-                  <div className="nft-card-content">
-                    <div className="nft-card-header">
-                      <h3 className="nft-card-title">
-                        Domain #{domain.tokenId || 'Unknown'}
-                      </h3>
-                      <span className="creator-badge">
-                        Creator
-                      </span>
-                    </div>
-
-                    <div className="nft-info">
-                      <div className="info-row">
-                        <span className="label">Creator:</span>
-                        <span className="value">
-                          {formatAddress(domain.creator)}
-                        </span>
-                      </div>
-                      <div className="info-row">
-                        <span className="label">Last Sale:</span>
-                        <span className="value price">
-                          {domain.lastPrice === "0" ? "No sales yet" : `${ethers.formatEther(domain.lastPrice)} MATIC`}
-                        </span>
-                      </div>
-                      <div className="info-row">
-                        <span className="label">Minted:</span>
-                        <span className="value">
-                          {new Date(domain.mintTimestamp * 1000).toLocaleDateString()}
-                        </span>
-                      </div>
-                      {domain.royaltyBalance && (
-                        <div className="info-row royalty-row">
-                          <span className="label">Royalty Balance:</span>
-                          <span className="value price royalty-balance">
-                            {domain.royaltyBalance} MATIC
-                          </span>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="nft-card-footer">
-                      {domain.royaltyBalance && parseFloat(domain.royaltyBalance) > 0 ? (
-                        <button 
-                          className="action-button primary"
-                          onClick={() => handleWithdrawFromSplitter(domain.splitterAddress!)}
-                          disabled={withdrawing === domain.splitterAddress}
-                        >
-                          {withdrawing === domain.splitterAddress ? "Withdrawing..." : "Withdraw Royalties"}
-                        </button>
-                      ) : (
-                        <button className="action-button secondary" disabled>
-                          Your Creation
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                    </div>
                   </React.Fragment>
                 );
               })}

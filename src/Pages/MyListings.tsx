@@ -5,9 +5,179 @@ import { useToast } from "../contexts/ToastContext";
 import { ListedToken } from "../sdk/MarketplaceSDK";
 import { NETWORK_CONFIG } from "../config/network";
 import Pagination from "../Components/Pagination";
+import { useNFTMetadata, getTokenURI } from "../hooks/useNFTMetadata";
+import { NFTMetadataDisplay } from "../Components/NFTMetadata";
 import "./MyListings.css";
 
 const ITEMS_PER_PAGE = 12;
+
+// Listing card component with metadata
+const ListingCard: React.FC<{
+  listing: ListedToken;
+  updatingListingId: number | null;
+  newPrice: string;
+  setNewPrice: (price: string) => void;
+  handleCancelUpdate: () => void;
+  handleConfirmUpdate: (listingId: number) => void;
+  isLoading: boolean;
+  handleUpdatePrice: (listingId: number, currentPrice: string) => void;
+  handleCancelListing: (listingId: number) => void;
+  cancelingListingId: number | null;
+}> = ({ listing, updatingListingId, newPrice, setNewPrice, handleCancelUpdate, handleConfirmUpdate, isLoading, handleUpdatePrice, handleCancelListing, cancelingListingId }) => {
+  const tokenURI = getTokenURI(listing.tokenData);
+  const { metadata, isLoading: metadataLoading } = useNFTMetadata(tokenURI);
+  
+  const imageSrc = metadata?.image ||
+    listing.tokenData?.image ||
+    listing.tokenData?.uri ||
+    `https://via.placeholder.com/400x400/667eea/ffffff?text=Domain+${listing.tokenId}`;
+
+  return (
+    <div className="nft-card">
+      <div className="nft-card-image">
+        <img
+          src={imageSrc}
+          alt={metadata?.name || `Domain #${listing.tokenId}`}
+          onError={(e) => {
+            e.currentTarget.src = `https://via.placeholder.com/400x400/667eea/ffffff?text=Domain+${listing.tokenId}`;
+          }}
+        />
+      </div>
+
+      <div className="nft-card-content">
+        <div className="nft-card-header">
+          <h3 className="nft-card-title">
+            {metadata?.name || `Domain #${listing.tokenId}`}
+          </h3>
+          <span className="listing-badge">
+            #{listing.listingId}
+          </span>
+        </div>
+
+        <NFTMetadataDisplay 
+          metadata={metadata} 
+          isLoading={metadataLoading}
+          fallbackName={`Domain #${listing.tokenId}`}
+        />
+
+        <div className="nft-info">
+          <div className="info-row">
+            <span className="label">Current Price:</span>
+            <span className="value price">
+              {listing.price} {NETWORK_CONFIG.nativeCurrency.symbol}
+            </span>
+          </div>
+          <div className="info-row">
+            <span className="label">Status:</span>
+            <span className="value status active">Active</span>
+          </div>
+        </div>
+
+        {updatingListingId === listing.listingId ? (
+          <div className="update-form">
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              placeholder={`New price in ${NETWORK_CONFIG.nativeCurrency.symbol}`}
+              value={newPrice}
+              onChange={(e) => setNewPrice(e.target.value)}
+              className="price-input"
+            />
+            <div className="form-actions">
+              <button
+                className="action-button secondary"
+                onClick={handleCancelUpdate}
+              >
+                Cancel
+              </button>
+              <button
+                className="action-button primary"
+                onClick={() => handleConfirmUpdate(listing.listingId)}
+                disabled={!newPrice || isLoading}
+              >
+                {isLoading ? "Updating..." : "Update"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="nft-card-footer">
+            <button
+              className="action-button secondary"
+              onClick={() => handleUpdatePrice(listing.listingId, listing.price)}
+              disabled={isLoading}
+            >
+              Update Price
+            </button>
+            <button
+              className="action-button danger"
+              onClick={() => handleCancelListing(listing.listingId)}
+              disabled={cancelingListingId === listing.listingId}
+            >
+              {cancelingListingId === listing.listingId ? "Cancelling..." : "Cancel Listing"}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// History listing card component with metadata
+const HistoryListingCard: React.FC<{
+  listing: ListedToken;
+}> = ({ listing }) => {
+  const tokenURI = getTokenURI(listing.tokenData);
+  const { metadata, isLoading: metadataLoading } = useNFTMetadata(tokenURI);
+  const imageSrc = metadata?.image ||
+    listing.tokenData?.image ||
+    listing.tokenData?.uri ||
+    `https://via.placeholder.com/400x400/667eea/ffffff?text=Domain+${listing.tokenId}`;
+
+  return (
+    <div className="nft-card">
+      <div className="nft-card-image">
+        <img
+          src={imageSrc}
+          alt={metadata?.name || `Domain #${listing.tokenId}`}
+          onError={(e) => {
+            e.currentTarget.src = `https://via.placeholder.com/400x400/667eea/ffffff?text=Domain+${listing.tokenId}`;
+          }}
+        />
+      </div>
+
+      <div className="nft-card-content">
+        <div className="nft-card-header">
+          <h3 className="nft-card-title">
+            {metadata?.name || `Domain #${listing.tokenId}`}
+          </h3>
+          <span className="listing-badge">
+            #{listing.listingId}
+          </span>
+        </div>
+
+        <NFTMetadataDisplay 
+          metadata={metadata} 
+          isLoading={metadataLoading}
+          fallbackName={`Domain #${listing.tokenId}`}
+        />
+
+        <div className="nft-info">
+          <div className="info-row">
+            <span className="label">Last Price:</span>
+            <span className="value price">
+              {listing.price} {NETWORK_CONFIG.nativeCurrency.symbol}
+            </span>
+          </div>
+          <div className="info-row">
+            <span className="label">Status:</span>
+            <span className="value status">Inactive</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const MyListings: React.FC = () => {
   const { account } = useWallet();
@@ -252,105 +422,19 @@ const MyListings: React.FC = () => {
                 </h2>
                 <div className="nft-grid">
                   {paginatedActiveListings.map((listing) => (
-                    <div key={listing.listingId} className="nft-card">
-                      <div className="nft-card-image">
-                        <img
-                          src={(() => {
-                            const imageSrc = listing.tokenData?.image ||
-                              listing.tokenData?.uri ||
-                              `https://via.placeholder.com/400x400/667eea/ffffff?text=Domain+${listing.tokenId}`;
-                            return imageSrc;
-                          })()}
-                          alt={`Domain #${listing.tokenId}`}
-                          onError={(e) => {
-                            e.currentTarget.src = `https://via.placeholder.com/400x400/667eea/ffffff?text=Domain+${listing.tokenId}`;
-                          }}
-                        />
-                      </div>
-
-                      <div className="nft-card-content">
-                        <div className="nft-card-header">
-                          <h3 className="nft-card-title">
-                            Domain #{listing.tokenId}
-                          </h3>
-                          <span className="listing-badge">
-                            #{listing.listingId}
-                          </span>
-                        </div>
-
-                        <div className="nft-info">
-                          <div className="info-row">
-                            <span className="label">Current Price:</span>
-                            <span className="value price">
-                              {listing.price} {NETWORK_CONFIG.nativeCurrency.symbol}
-                            </span>
-                          </div>
-                          <div className="info-row">
-                            <span className="label">Status:</span>
-                            <span className="value status active">Active</span>
-                          </div>
-                        </div>
-
-                        {updatingListingId === listing.listingId ? (
-                          <div className="update-form">
-                            <input
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              placeholder={`New price in ${NETWORK_CONFIG.nativeCurrency.symbol}`}
-                              value={newPrice}
-                              onChange={(e) => setNewPrice(e.target.value)}
-                              className="price-input"
-                            />
-                            <div className="form-actions">
-                              <button
-                                className="action-button secondary"
-                                onClick={handleCancelUpdate}
-                              >
-                                Cancel
-                              </button>
-                              <button
-                                className="action-button primary"
-                                onClick={() =>
-                                  handleConfirmUpdate(listing.listingId)
-                                }
-                                disabled={!newPrice || isLoading}
-                              >
-                                {isLoading ? "Updating..." : "Update"}
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="nft-card-footer">
-                            <button
-                              className="action-button secondary"
-                              onClick={() =>
-                                handleUpdatePrice(
-                                  listing.listingId,
-                                  listing.price,
-                                )
-                              }
-                              disabled={isLoading}
-                            >
-                              Update Price
-                            </button>
-                            <button
-                              className="action-button danger"
-                              onClick={() =>
-                                handleCancelListing(listing.listingId)
-                              }
-                              disabled={
-                                cancelingListingId === listing.listingId
-                              }
-                            >
-                              {cancelingListingId === listing.listingId
-                                ? "Cancelling..."
-                                : "Cancel Listing"}
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
+                    <ListingCard
+                      key={listing.listingId}
+                      listing={listing}
+                      updatingListingId={updatingListingId}
+                      newPrice={newPrice}
+                      setNewPrice={setNewPrice}
+                      handleCancelUpdate={handleCancelUpdate}
+                      handleConfirmUpdate={handleConfirmUpdate}
+                      isLoading={isLoading}
+                      handleUpdatePrice={handleUpdatePrice}
+                      handleCancelListing={handleCancelListing}
+                      cancelingListingId={cancelingListingId}
+                    />
                   ))}
                 </div>
 
@@ -371,46 +455,7 @@ const MyListings: React.FC = () => {
                 </h2>
                 <div className="nft-grid">
                   {paginatedSoldListings.map((listing) => (
-                    <div key={listing.listingId} className="nft-card">
-                      <div className="nft-card-image">
-                        <img
-                          src={(() => {
-                            const imageSrc = listing.tokenData?.image ||
-                              listing.tokenData?.uri ||
-                              `https://via.placeholder.com/400x400/667eea/ffffff?text=Domain+${listing.tokenId}`;
-                            return imageSrc;
-                          })()}
-                          alt={`Domain #${listing.tokenId}`}
-                          onError={(e) => {
-                            e.currentTarget.src = `https://via.placeholder.com/400x400/667eea/ffffff?text=Domain+${listing.tokenId}`;
-                          }}
-                        />
-                      </div>
-
-                      <div className="nft-card-content">
-                        <div className="nft-card-header">
-                          <h3 className="nft-card-title">
-                            Domain #{listing.tokenId}
-                          </h3>
-                          <span className="listing-badge">
-                            #{listing.listingId}
-                          </span>
-                        </div>
-
-                        <div className="nft-info">
-                          <div className="info-row">
-                            <span className="label">Last Price:</span>
-                            <span className="value price">
-                              {listing.price} {NETWORK_CONFIG.nativeCurrency.symbol}
-                            </span>
-                          </div>
-                          <div className="info-row">
-                            <span className="label">Status:</span>
-                            <span className="value status">Inactive</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
+                    <HistoryListingCard key={listing.listingId} listing={listing} />
                   ))}
                 </div>
 

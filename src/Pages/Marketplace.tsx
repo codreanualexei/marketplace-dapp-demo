@@ -6,9 +6,105 @@ import { ListedToken } from "../sdk/MarketplaceSDK";
 import { NETWORK_CONFIG } from "../config/network";
 import { ethers } from "ethers";
 import Pagination from "../Components/Pagination";
+import { useNFTMetadata, getTokenURI } from "../hooks/useNFTMetadata";
+import { NFTMetadataDisplay } from "../Components/NFTMetadata";
 import "./Marketplace.css";
 
 const ITEMS_PER_PAGE = 12;
+
+// Card component with metadata
+const MarketplaceCard: React.FC<{
+  listing: ListedToken;
+  tokenURI: string | null;
+  account: string | null;
+  isOwnListing: (seller: string | undefined) => boolean;
+  handleBuy: (listing: ListedToken) => void;
+  buyingListingId: number | null;
+  formatAddress: (address: string) => string;
+}> = ({ listing, tokenURI, account, isOwnListing, handleBuy, buyingListingId, formatAddress }) => {
+  const { metadata, isLoading: metadataLoading } = useNFTMetadata(tokenURI);
+  
+  // Get image from metadata or fallback
+  const imageSrc = metadata?.image ||
+    (listing.tokenData as any)?.image ||
+    listing.tokenData?.uri ||
+    (listing.tokenData as any)?.[2] ||
+    `https://via.placeholder.com/400x400/667eea/ffffff?text=Domain+${listing.tokenId}`;
+
+  return (
+    <div className="nft-card">
+      <div className="nft-card-image">
+        <img
+          src={imageSrc}
+          alt={metadata?.name || `Domain #${listing.tokenId || 'Unknown'}`}
+          onError={(e) => {
+            e.currentTarget.src = `https://via.placeholder.com/400x400/667eea/ffffff?text=Domain+${listing.tokenId}`;
+          }}
+        />
+      </div>
+
+      <div className="nft-card-content">
+        <div className="nft-card-header">
+          <h3 className="nft-card-title">
+            {metadata?.name || `Domain #${listing.tokenId || 'Unknown'}`}
+          </h3>
+          <span className="listing-badge">
+            #{listing.listingId || 'Unknown'}
+          </span>
+        </div>
+
+        <NFTMetadataDisplay 
+          metadata={metadata} 
+          isLoading={metadataLoading}
+          fallbackName={`Domain #${listing.tokenId || 'Unknown'}`}
+        />
+
+        <div className="nft-info">
+          <div className="info-row">
+            <span className="label">Seller:</span>
+            <span className="value">
+              {formatAddress(listing.seller)}
+            </span>
+          </div>
+          <div className="info-row">
+            <span className="label">Price:</span>
+            <span className="value price">
+              {listing.price || '0'} {NETWORK_CONFIG.nativeCurrency.symbol}
+            </span>
+          </div>
+          {listing.tokenData && listing.tokenData.creator && listing.tokenData.creator !== '0x0000000000000000000000000000000000000000' && (
+            <div className="info-row">
+              <span className="label">Creator:</span>
+              <span className="value">
+                {formatAddress(listing.tokenData.creator)}
+              </span>
+            </div>
+          )}
+        </div>
+
+        <div className="nft-card-footer">
+          {account && isOwnListing(listing.seller) ? (
+            <button className="action-button secondary" disabled>
+              Your Listing
+            </button>
+          ) : (
+            <button
+              className="action-button primary"
+              onClick={() => handleBuy(listing)}
+              disabled={buyingListingId === listing.listingId}
+            >
+              {buyingListingId === listing.listingId
+                ? "Buying..."
+                : account 
+                  ? "Buy Now" 
+                  : "Connect Wallet to Buy"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const Marketplace: React.FC = () => {
   const { account } = useWallet();
@@ -269,15 +365,15 @@ const Marketplace: React.FC = () => {
     }
   };
 
-  const formatAddress = (address: string | undefined | null) => {
+  const formatAddress = (address: string | undefined | null): string => {
     if (!address || typeof address !== 'string' || address === '0x0000000000000000000000000000000000000000') {
       return 'Unknown';
     }
     return `${address.slice(0, 6)}...${address.slice(-4)}`;
   };
 
-  const isOwnListing = (seller: string | undefined) => {
-    return account && seller && seller.toLowerCase() === account.toLowerCase();
+  const isOwnListing = (seller: string | undefined): boolean => {
+    return !!(account && seller && seller.toLowerCase() === account.toLowerCase());
   };
 
   // Pagination logic
@@ -415,96 +511,19 @@ const Marketplace: React.FC = () => {
                 </div>
               )}
               
-              {listedDomains.map((listing) => (
-                <div key={listing.listingId} className="nft-card">
-                  <div className="nft-card-image">
-                    <img
-                      src={(() => {
-                        // Try multiple possible image sources
-                        const imageSrc = (listing.tokenData as any)?.image ||
-                          listing.tokenData?.uri ||
-                          (listing.tokenData as any)?.[2] || // Contract data array index 2 (URI)
-                          (listing.tokenData as any)?.metadata?.image ||
-                          (listing.tokenData as any)?.metadata?.rawMetadata?.image ||
-                          `https://via.placeholder.com/400x400/667eea/ffffff?text=Domain+${listing.tokenId}`;
-                        
-                        console.log(`Rendering image for token ${listing.tokenId}:`, {
-                          image: (listing.tokenData as any)?.image,
-                          uri: listing.tokenData?.uri,
-                          arrayIndex2: (listing.tokenData as any)?.[2], // Contract URI at index 2
-                          metadata: (listing.tokenData as any)?.metadata,
-                          finalSrc: imageSrc,
-                          tokenData: listing.tokenData
-                        });
-                        
-                        return imageSrc;
-                      })()}
-                      alt={`Domain #${listing.tokenId || 'Unknown'}`}
-                      onError={(e) => {
-                        console.log(`Image failed to load for token ${listing.tokenId}, falling back to placeholder`);
-                        e.currentTarget.src = `https://via.placeholder.com/400x400/667eea/ffffff?text=Domain+${listing.tokenId}`;
-                      }}
-                      onLoad={() => {
-                        console.log(`Image loaded successfully for token ${listing.tokenId}`);
-                      }}
-                    />
-                  </div>
-
-                  <div className="nft-card-content">
-                    <div className="nft-card-header">
-                      <h3 className="nft-card-title">
-                        Domain #{listing.tokenId || 'Unknown'}
-                      </h3>
-                      <span className="listing-badge">
-                        #{listing.listingId || 'Unknown'}
-                      </span>
-                    </div>
-
-                    <div className="nft-info">
-                      <div className="info-row">
-                        <span className="label">Seller:</span>
-                        <span className="value">
-                          {formatAddress(listing.seller)}
-                        </span>
-                      </div>
-                      <div className="info-row">
-                        <span className="label">Price:</span>
-                        <span className="value price">
-                          {listing.price || '0'} {NETWORK_CONFIG.nativeCurrency.symbol}
-                        </span>
-                      </div>
-                      {listing.tokenData && listing.tokenData.creator && listing.tokenData.creator !== '0x0000000000000000000000000000000000000000' && (
-                        <div className="info-row">
-                          <span className="label">Creator:</span>
-                          <span className="value">
-                            {formatAddress(listing.tokenData.creator)}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="nft-card-footer">
-                      {account && isOwnListing(listing.seller) ? (
-                        <button className="action-button secondary" disabled>
-                          Your Listing
-                        </button>
-                      ) : (
-                        <button
-                          className="action-button primary"
-                          onClick={() => handleBuy(listing)}
-                          disabled={buyingListingId === listing.listingId}
-                        >
-                          {buyingListingId === listing.listingId
-                            ? "Buying..."
-                            : account 
-                              ? "Buy Now" 
-                              : "Connect Wallet to Buy"}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
+              {listedDomains.map((listing) => {
+                const tokenURI = getTokenURI(listing.tokenData);
+                return <MarketplaceCard
+                  key={listing.listingId}
+                  listing={listing}
+                  tokenURI={tokenURI}
+                  account={account}
+                  isOwnListing={isOwnListing}
+                  handleBuy={handleBuy}
+                  buyingListingId={buyingListingId}
+                  formatAddress={formatAddress}
+                />;
+              })}
               
               {/* Loading card - show when page is loading */}
               {isLoadingPage && (
