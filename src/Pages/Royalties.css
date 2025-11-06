@@ -31,13 +31,14 @@
 }
 
 .error-banner {
-  background: #ff4757;
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
   color: white;
   padding: 16px 24px;
   border-radius: 12px;
   margin-bottom: 24px;
   text-align: center;
   font-weight: 500;
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
 }
 
 .summary-cards {
@@ -428,7 +429,7 @@
 }
 
 .domains-section .section-title {
-  color: #2c3e50;
+  color: #1a1a2e;
   font-size: 28px;
   font-weight: 700;
   margin: 0;
@@ -441,13 +442,13 @@
 }
 
 .domains-section .stat-item {
-  background: #f8f9fa;
+  background: #f8f9ff;
   padding: 8px 16px;
   border-radius: 20px;
   font-size: 14px;
   font-weight: 600;
-  color: #7f8c8d;
-  border: 1px solid #e1e8ed;
+  color: #666;
+  border: 1px solid #e0e0e0;
 }
 
 .domains-section .stat-item.highlight {
@@ -457,7 +458,7 @@
 }
 
 .domains-section .section-description {
-  color: #7f8c8d;
+  color: #666;
   margin-bottom: 24px;
   font-size: 16px;
   line-height: 1.5;
@@ -484,7 +485,7 @@
   content: '';
   flex: 1;
   height: 1px;
-  background: linear-gradient(to right, transparent, #e1e8ed, transparent);
+  background: linear-gradient(to right, transparent, #e0e0e0, transparent);
   margin-right: 16px;
 }
 
@@ -492,18 +493,18 @@
   content: '';
   flex: 1;
   height: 1px;
-  background: linear-gradient(to left, transparent, #e1e8ed, transparent);
+  background: linear-gradient(to left, transparent, #e0e0e0, transparent);
   margin-left: 16px;
 }
 
 .divider-text {
-  color: #7f8c8d;
+  color: #666;
   font-size: 14px;
   font-weight: 500;
   background: #f8f9ff;
   padding: 8px 16px;
   border-radius: 20px;
-  border: 1px solid #e1e8ed;
+  border: 1px solid #e0e0e0;
 }
 
 /* NFT Card */
@@ -513,7 +514,7 @@
   overflow: hidden;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
   transition: all 0.3s ease;
-  border: 1px solid #e1e8ed;
+  border: 1px solid #e0e0e0;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -534,7 +535,7 @@
   width: 100%;
   height: 280px;
   overflow: hidden;
-  background: #f8f9fa;
+  background: #f8f9ff;
 }
 
 .nft-card-image img {
@@ -565,7 +566,7 @@
 .nft-card-title {
   font-size: 18px;
   font-weight: 600;
-  color: #2c3e50;
+  color: #1a1a2e;
   margin: 0;
 }
 
@@ -598,18 +599,18 @@
 
 .info-row .label {
   font-size: 14px;
-  color: #7f8c8d;
+  color: #666;
   font-weight: 500;
 }
 
 .info-row .value {
   font-size: 14px;
-  color: #2c3e50;
+  color: #1a1a2e;
   font-weight: 600;
 }
 
 .info-row .value.price {
-  color: #27ae60;
+  color: #059669;
   font-weight: 700;
 }
 
@@ -622,7 +623,7 @@
 }
 
 .royalty-balance {
-  color: #667eea !important;
+  color: #059669 !important;
   font-weight: 700 !important;
   font-size: 16px !important;
 }
@@ -657,9 +658,9 @@
 }
 
 .nft-card-footer .action-button.secondary {
-  background: #f8f9fa;
-  color: #7f8c8d;
-  border: 1px solid #e1e8ed;
+  background: #f8f9ff;
+  color: #666;
+  border: 1px solid #e0e0e0;
 }
 
 .nft-card-footer .action-button:disabled {
@@ -777,7 +778,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #f8f9fa;
+  background: #f8f9ff;
 }
 
 .loading-placeholder .spinner {

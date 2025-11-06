@@ -185,12 +185,13 @@
 }
 
 .sold-overlay span {
-  background: #ff4757;
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
   color: white;
   padding: 12px 32px;
   border-radius: 8px;
   font-size: 20px;
   font-weight: 700;
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
 }
 
 .nft-card-content {
@@ -429,7 +430,7 @@
 }
 
 .error-message p {
-  color: #ff4757;
+  color: #dc2626;
   font-size: 18px;
   margin-bottom: 20px;
 }

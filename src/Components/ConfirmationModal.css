@@ -135,7 +135,7 @@
 
 .confirmation-modal-button.cancel:hover:not(:disabled) {
   background: #e0e0e0;
-  color: #333;
+  color: #1a1a2e;
 }
 
 .confirmation-modal-button.confirm {
@@ -149,15 +149,16 @@
 }
 
 .confirmation-modal-button.confirm.danger {
-  background: linear-gradient(135deg, #ff4757 0%, #ff3838 100%);
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
 }
 
 .confirmation-modal-button.confirm.danger:hover:not(:disabled) {
-  box-shadow: 0 4px 12px rgba(255, 71, 87, 0.4);
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+  background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
 }
 
 .confirmation-modal-button.confirm.warning {
-  background: linear-gradient(135deg, #ffa726 0%, #ff9800 100%);
+  background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%);
 }
 
 .confirmation-modal-button.confirm.warning:hover:not(:disabled) {

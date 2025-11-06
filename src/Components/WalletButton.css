@@ -33,16 +33,18 @@
 }
 
 .wallet-connected-button {
-  background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
   color: white;
   display: flex;
   align-items: center;
   gap: 12px;
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
 }
 
 .wallet-connected-button:hover {
   transform: translateY(-2px);
-  box-shadow: 0 6px 12px rgba(17, 153, 142, 0.4);
+  box-shadow: 0 6px 12px rgba(16, 185, 129, 0.4);
+  background: linear-gradient(135deg, #059669 0%, #047857 100%);
 }
 
 .wallet-balance {
@@ -85,8 +87,8 @@
   width: 100%;
   padding: 12px 16px;
   margin: 4px 0;
-  background: #f8f9fa;
-  border: 1px solid #e9ecef;
+  background: #f8f9ff;
+  border: 1px solid #e0e0e0;
   border-radius: 8px;
   font-size: 14px;
   font-weight: 600;
@@ -98,7 +100,7 @@
 }
 
 .wallet-option-button:hover:not(:disabled) {
-  background: #e9ecef;
+  background: #e0e0e0;
   transform: translateY(-1px);
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
 }
@@ -164,7 +166,7 @@
 }
 
 .dropdown-value {
-  color: #333;
+  color: #1a1a2e;
   font-size: 14px;
   font-weight: 600;
 }
@@ -172,7 +174,7 @@
 .disconnect-button {
   width: 100%;
   padding: 10px;
-  background: #ff4757;
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
   color: white;
   border: none;
   border-radius: 8px;
@@ -180,24 +182,27 @@
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.2);
 }
 
 .disconnect-button:hover {
-  background: #ff3838;
+  background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
   transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
 }
 
 .wallet-error {
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
-  background: #ff4757;
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
   color: white;
   padding: 8px 16px;
   border-radius: 8px;
   font-size: 14px;
   white-space: nowrap;
   animation: slideDown 0.2s ease;
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
 }
 
 /* Tablet (768px - 1024px) */

@@ -98,12 +98,13 @@
 }
 
 .sold-overlay span {
-  background: #ff4757;
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
   color: white;
   padding: 12px 32px;
   border-radius: 8px;
   font-size: 20px;
   font-weight: 700;
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
 }
 
 .nft-card-content {
@@ -223,13 +224,15 @@
 }
 
 .action-button.danger {
-  background: #ff4757;
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
   color: white;
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.2);
 }
 
 .action-button.danger:hover:not(:disabled) {
-  background: #ff3838;
+  background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
   transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
 }
 
 .status {
@@ -240,13 +243,15 @@
 }
 
 .status.active {
-  background: #38ef7d;
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
   color: white;
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
 }
 
 .status.sold {
-  background: #ff4757;
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
   color: white;
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3);
 }
 
 /* Full-screen centered loading overlay */

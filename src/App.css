@@ -56,10 +56,10 @@ code {
   right: 20px;
   z-index: 1000;
   max-width: 400px;
-  background: #ff4444;
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
   color: white;
   border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
   animation: slideIn 0.3s ease-out;
 }
 
