@@ -142,10 +142,12 @@ const Marketplace: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [loadedDomainsCount, setLoadedDomainsCount] = useState(0);
   const [isAwaitingSignature, setIsAwaitingSignature] = useState(false);
+  const [txStatus, setTxStatus] = useState<'signature' | 'submitting' | 'confirming' | null>(null);
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
     title: string;
     message: string;
+    domainName?: string;
     onConfirm: () => void;
     type?: "default" | "danger" | "warning";
   }>({
@@ -294,16 +296,40 @@ const Marketplace: React.FC = () => {
       isOpen: true,
       title: "Purchase Domain",
       message: `Buy ${domainName} for ${listing.price} ${NETWORK_CONFIG.nativeCurrency.symbol}?`,
+      domainName: domainName,
       type: "default",
       onConfirm: async () => {
         setConfirmModal({ ...confirmModal, isOpen: false });
         setBuyingListingId(listing.listingId);
         setIsAwaitingSignature(true);
+        setTxStatus('signature');
 
         try {
           console.log(`Starting purchase for listing ${listing.listingId}...`);
+          
+          // Track transaction: signature phase (user needs to sign in wallet)
+          setTxStatus('signature');
+          
+          // Use timeouts to track transaction phases
+          // After 1 second, assume signature is done and transaction is being submitted
+          const submittingTimeout = setTimeout(() => {
+            setTxStatus('submitting');
+          }, 1000);
+          
+          // After 3 seconds total, assume transaction is submitted and waiting for confirmation
+          const confirmingTimeout = setTimeout(() => {
+            setTxStatus('confirming');
+          }, 3000);
+          
           const txHash = await sdk.buyToken(listing.listingId);
+          
+          // Clear timeouts since transaction completed
+          clearTimeout(submittingTimeout);
+          clearTimeout(confirmingTimeout);
+          
+          // Transaction completed
           setIsAwaitingSignature(false);
+          setTxStatus(null);
 
           if (txHash) {
             console.log(`Purchase successful! Transaction: ${txHash}`);
@@ -336,6 +362,10 @@ const Marketplace: React.FC = () => {
           }
         } catch (err: any) {
           console.error("Error buying token:", err);
+          
+          // Reset transaction status on error
+          setIsAwaitingSignature(false);
+          setTxStatus(null);
           
           // Show more detailed error message
           let errorMessage = "Failed to buy domain";
@@ -483,10 +513,10 @@ const Marketplace: React.FC = () => {
           <div className="loading-overlay">
             <div className="loading">
               <div className="spinner"></div>
-              <p>
-                {isAwaitingSignature 
-                  ? "Waiting for your signature..." 
-                  : ""}
+              <p className={txStatus === 'signature' ? 'tx-status-signature' : txStatus === 'submitting' ? 'tx-status-submitting' : txStatus === 'confirming' ? 'tx-status-confirming' : ''}>
+                {isAwaitingSignature && txStatus === 'signature' && "Waiting for your signature..."}
+                {isAwaitingSignature && txStatus === 'submitting' && "Submitting transaction..."}
+                {isAwaitingSignature && txStatus === 'confirming' && "Waiting for transaction confirmation..."}
               </p>
             </div>
           </div>
@@ -526,15 +556,16 @@ const Marketplace: React.FC = () => {
           </>
         )}
 
-        <ConfirmationModal
-          isOpen={confirmModal.isOpen}
-          title={confirmModal.title}
-          message={confirmModal.message}
-          onConfirm={confirmModal.onConfirm}
-          onCancel={() => setConfirmModal({ ...confirmModal, isOpen: false })}
-          type={confirmModal.type}
-          isLoading={isLoadingPage || isAwaitingSignature}
-        />
+      <ConfirmationModal
+        isOpen={confirmModal.isOpen}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        domainName={confirmModal.domainName}
+        onConfirm={confirmModal.onConfirm}
+        onCancel={() => setConfirmModal({ ...confirmModal, isOpen: false })}
+        type={confirmModal.type}
+        isLoading={isLoadingPage || isAwaitingSignature}
+      />
       </div>
     </div>
   );

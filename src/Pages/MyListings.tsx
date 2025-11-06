@@ -220,10 +220,12 @@ const MyListings: React.FC = () => {
   const [activeCurrentPage, setActiveCurrentPage] = useState(1);
   const [soldCurrentPage, setSoldCurrentPage] = useState(1);
   const [isAwaitingSignature, setIsAwaitingSignature] = useState(false);
+  const [txStatus, setTxStatus] = useState<'signature' | 'submitting' | 'confirming' | null>(null);
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
     title: string;
     message: string;
+    domainName?: string;
     onConfirm: () => void;
     type?: "default" | "danger" | "warning";
   }>({
@@ -296,15 +298,30 @@ const MyListings: React.FC = () => {
       isOpen: true,
       title: "Update Listing Price",
       message: `Update ${domainName} listing to ${newPrice} ${NETWORK_CONFIG.nativeCurrency.symbol}?`,
+      domainName: domainName,
       type: "default",
       onConfirm: async () => {
         setConfirmModal({ ...confirmModal, isOpen: false });
         setIsLoading(true);
         setIsAwaitingSignature(true);
+        setTxStatus('signature');
 
         try {
+          const submittingTimeout = setTimeout(() => {
+            setTxStatus('submitting');
+          }, 1000);
+          
+          const confirmingTimeout = setTimeout(() => {
+            setTxStatus('confirming');
+          }, 3000);
+          
           const txHash = await sdk.updateListing(listingId, newPrice);
+          
+          clearTimeout(submittingTimeout);
+          clearTimeout(confirmingTimeout);
+          
           setIsAwaitingSignature(false);
+          setTxStatus(null);
 
           if (txHash) {
             showSuccess(
@@ -321,6 +338,7 @@ const MyListings: React.FC = () => {
         } catch (err: any) {
           console.error("Error updating listing:", err);
           setIsAwaitingSignature(false);
+          setTxStatus(null);
           showError("Update Error", err.message || "Failed to update price");
         } finally {
           setIsLoading(false);
@@ -341,15 +359,30 @@ const MyListings: React.FC = () => {
       isOpen: true,
       title: "Cancel Listing",
       message: `Cancel ${domainName} listing? This will remove it from the marketplace.`,
+      domainName: domainName,
       type: "danger",
       onConfirm: async () => {
         setConfirmModal({ ...confirmModal, isOpen: false });
         setCancelingListingId(listingId);
         setIsAwaitingSignature(true);
+        setTxStatus('signature');
 
         try {
+          const submittingTimeout = setTimeout(() => {
+            setTxStatus('submitting');
+          }, 1000);
+          
+          const confirmingTimeout = setTimeout(() => {
+            setTxStatus('confirming');
+          }, 3000);
+          
           const txHash = await sdk.cancelListing(listingId);
+          
+          clearTimeout(submittingTimeout);
+          clearTimeout(confirmingTimeout);
+          
           setIsAwaitingSignature(false);
+          setTxStatus(null);
 
           if (txHash) {
             showSuccess(
@@ -377,6 +410,7 @@ const MyListings: React.FC = () => {
           
           showError("Cancel Error", errorMessage);
           setIsAwaitingSignature(false);
+          setTxStatus(null);
         } finally {
           setCancelingListingId(null);
         }
@@ -468,10 +502,10 @@ const MyListings: React.FC = () => {
           <div className="loading-overlay">
             <div className="loading">
               <div className="spinner"></div>
-              <p>
-                {isAwaitingSignature 
-                  ? "Waiting for your signature..." 
-                  : ""}
+              <p className={txStatus === 'signature' ? 'tx-status-signature' : txStatus === 'submitting' ? 'tx-status-submitting' : txStatus === 'confirming' ? 'tx-status-confirming' : ''}>
+                {isAwaitingSignature && txStatus === 'signature' && "Waiting for your signature..."}
+                {isAwaitingSignature && txStatus === 'submitting' && "Submitting transaction..."}
+                {isAwaitingSignature && txStatus === 'confirming' && "Waiting for transaction confirmation..."}
               </p>
             </div>
           </div>
@@ -538,15 +572,16 @@ const MyListings: React.FC = () => {
           </>
         )}
 
-        <ConfirmationModal
-          isOpen={confirmModal.isOpen}
-          title={confirmModal.title}
-          message={confirmModal.message}
-          onConfirm={confirmModal.onConfirm}
-          onCancel={() => setConfirmModal({ ...confirmModal, isOpen: false })}
-          type={confirmModal.type}
-          isLoading={isLoading || isAwaitingSignature}
-        />
+      <ConfirmationModal
+        isOpen={confirmModal.isOpen}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        domainName={confirmModal.domainName}
+        onConfirm={confirmModal.onConfirm}
+        onCancel={() => setConfirmModal({ ...confirmModal, isOpen: false })}
+        type={confirmModal.type}
+        isLoading={isLoading || isAwaitingSignature}
+      />
       </div>
     </div>
   );

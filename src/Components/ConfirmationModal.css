@@ -101,6 +101,18 @@
   white-space: pre-line;
 }
 
+.confirmation-modal-domain-name {
+  color: #667eea;
+  font-weight: 700;
+  font-size: 17px;
+  background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%);
+  padding: 2px 8px;
+  border-radius: 6px;
+  display: inline-block;
+  margin: 0 2px;
+  border: 1px solid rgba(102, 126, 234, 0.2);
+}
+
 .confirmation-modal-footer {
   display: flex;
   gap: 12px;

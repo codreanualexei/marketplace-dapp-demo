@@ -140,10 +140,12 @@ const Royalties: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [withdrawing, setWithdrawing] = useState<string | null>(null);
   const [isAwaitingSignature, setIsAwaitingSignature] = useState(false);
+  const [txStatus, setTxStatus] = useState<'signature' | 'submitting' | 'confirming' | null>(null);
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
     title: string;
     message: string;
+    domainName?: string;
     onConfirm: () => void;
     type?: "default" | "danger" | "warning";
   }>({
@@ -286,15 +288,30 @@ const Royalties: React.FC = () => {
       isOpen: true,
       title: "Withdraw Royalties",
       message: `Withdraw your royalties from ${domainName}?\n\nThis will withdraw all pending royalties from the splitter contract.`,
+      domainName: domainName,
       type: "default",
       onConfirm: async () => {
         setConfirmModal({ ...confirmModal, isOpen: false });
         setWithdrawing(splitterAddress);
         setIsAwaitingSignature(true);
+        setTxStatus('signature');
 
         try {
+          const submittingTimeout = setTimeout(() => {
+            setTxStatus('submitting');
+          }, 1000);
+          
+          const confirmingTimeout = setTimeout(() => {
+            setTxStatus('confirming');
+          }, 3000);
+          
           const result = await sdk.withdrawRoyaltyFromSplitter(splitterAddress);
+          
+          clearTimeout(submittingTimeout);
+          clearTimeout(confirmingTimeout);
+          
           setIsAwaitingSignature(false);
+          setTxStatus(null);
 
           if (result) {
             showSuccess(
@@ -310,6 +327,7 @@ const Royalties: React.FC = () => {
         } catch (err: any) {
           console.error("Error withdrawing:", err);
           setIsAwaitingSignature(false);
+          setTxStatus(null);
           showError("Withdrawal Error", err.message || "Failed to withdraw");
         } finally {
           setWithdrawing(null);
@@ -331,10 +349,24 @@ const Royalties: React.FC = () => {
         setConfirmModal({ ...confirmModal, isOpen: false });
         setWithdrawing("marketplace");
         setIsAwaitingSignature(true);
+        setTxStatus('signature');
 
         try {
+          const submittingTimeout = setTimeout(() => {
+            setTxStatus('submitting');
+          }, 1000);
+          
+          const confirmingTimeout = setTimeout(() => {
+            setTxStatus('confirming');
+          }, 3000);
+          
           const txHash = await sdk.withdrawMarketPlaceFees();
+          
+          clearTimeout(submittingTimeout);
+          clearTimeout(confirmingTimeout);
+          
           setIsAwaitingSignature(false);
+          setTxStatus(null);
 
           if (txHash) {
             showSuccess(
@@ -352,6 +384,7 @@ const Royalties: React.FC = () => {
         } catch (err: any) {
           console.error("Error withdrawing marketplace fees:", err);
           setIsAwaitingSignature(false);
+          setTxStatus(null);
           showError("Withdrawal Error", err.message || "Failed to withdraw marketplace fees");
         } finally {
           setWithdrawing(null);
@@ -433,10 +466,10 @@ const Royalties: React.FC = () => {
           <div className="loading-overlay">
             <div className="loading">
               <div className="spinner"></div>
-              <p>
-                {isAwaitingSignature 
-                  ? "Waiting for your signature..." 
-                  : ""}
+              <p className={txStatus === 'signature' ? 'tx-status-signature' : txStatus === 'submitting' ? 'tx-status-submitting' : txStatus === 'confirming' ? 'tx-status-confirming' : ''}>
+                {isAwaitingSignature && txStatus === 'signature' && "Waiting for your signature..."}
+                {isAwaitingSignature && txStatus === 'submitting' && "Submitting transaction..."}
+                {isAwaitingSignature && txStatus === 'confirming' && "Waiting for transaction confirmation..."}
               </p>
             </div>
           </div>
@@ -561,15 +594,16 @@ const Royalties: React.FC = () => {
           </>
         )}
 
-        <ConfirmationModal
-          isOpen={confirmModal.isOpen}
-          title={confirmModal.title}
-          message={confirmModal.message}
-          onConfirm={confirmModal.onConfirm}
-          onCancel={() => setConfirmModal({ ...confirmModal, isOpen: false })}
-          type={confirmModal.type}
-          isLoading={isLoading || isAwaitingSignature}
-        />
+      <ConfirmationModal
+        isOpen={confirmModal.isOpen}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        domainName={confirmModal.domainName}
+        onConfirm={confirmModal.onConfirm}
+        onCancel={() => setConfirmModal({ ...confirmModal, isOpen: false })}
+        type={confirmModal.type}
+        isLoading={isLoading || isAwaitingSignature}
+      />
       </div>
     </div>
   );

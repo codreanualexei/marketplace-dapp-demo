@@ -5,6 +5,7 @@ interface ConfirmationModalProps {
   isOpen: boolean;
   title: string;
   message: string;
+  domainName?: string; // Optional domain name to highlight
   confirmText?: string;
   cancelText?: string;
   onConfirm: () => void;
@@ -17,6 +18,7 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
   isOpen,
   title,
   message,
+  domainName,
   confirmText = "Confirm",
   cancelText = "Cancel",
   onConfirm,
@@ -25,6 +27,32 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
   isLoading = false,
 }) => {
   if (!isOpen) return null;
+
+  // Replace domain name in message with styled version
+  const renderMessage = () => {
+    if (!domainName) {
+      return message;
+    }
+    
+    // Split message by domain name and wrap it with styled span
+    const parts = message.split(domainName);
+    if (parts.length === 1) {
+      return message; // Domain name not found in message
+    }
+    
+    return (
+      <>
+        {parts.map((part, index) => (
+          <React.Fragment key={index}>
+            {part}
+            {index < parts.length - 1 && (
+              <span className="confirmation-modal-domain-name">{domainName}</span>
+            )}
+          </React.Fragment>
+        ))}
+      </>
+    );
+  };
 
   const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.target === e.currentTarget && !isLoading) {
@@ -66,7 +94,7 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
 
         <div className="confirmation-modal-body">
           <p id="confirmation-modal-message" className="confirmation-modal-message">
-            {message}
+            {renderMessage()}
           </p>
         </div>
 

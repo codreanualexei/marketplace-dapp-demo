@@ -188,10 +188,12 @@ const MyDomains: React.FC = () => {
   const [tokenApprovalStatus, setTokenApprovalStatus] = useState<Record<number, boolean>>({});
   const [checkingApproval, setCheckingApproval] = useState<Record<number, boolean>>({});
   const [isAwaitingSignature, setIsAwaitingSignature] = useState(false);
+  const [txStatus, setTxStatus] = useState<'signature' | 'submitting' | 'confirming' | null>(null);
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
     title: string;
     message: string;
+    domainName?: string;
     onConfirm: () => void;
     type?: "default" | "danger" | "warning";
   }>({
@@ -327,15 +329,30 @@ const MyDomains: React.FC = () => {
       isOpen: true,
       title: "Approve Domain",
       message: `Approve ${domainName} for marketplace listing?`,
+      domainName: domainName,
       type: "default",
       onConfirm: async () => {
         setConfirmModal({ ...confirmModal, isOpen: false });
         setIsLoading(true);
         setIsAwaitingSignature(true);
+        setTxStatus('signature');
 
         try {
+          const submittingTimeout = setTimeout(() => {
+            setTxStatus('submitting');
+          }, 1000);
+          
+          const confirmingTimeout = setTimeout(() => {
+            setTxStatus('confirming');
+          }, 3000);
+          
           const txHash = await sdk.approveTokenForSale(tokenId);
+          
+          clearTimeout(submittingTimeout);
+          clearTimeout(confirmingTimeout);
+          
           setIsAwaitingSignature(false);
+          setTxStatus(null);
 
           if (txHash) {
             showSuccess(
@@ -351,6 +368,7 @@ const MyDomains: React.FC = () => {
         } catch (err: any) {
           console.error("Error approving token:", err);
           setIsAwaitingSignature(false);
+          setTxStatus(null);
           showError("Approval Failed", err.message || "Failed to approve domain");
         } finally {
           setIsLoading(false);
@@ -374,15 +392,30 @@ const MyDomains: React.FC = () => {
       isOpen: true,
       title: "List Domain for Sale",
       message: `List ${domainName} for ${listPrice} ${NETWORK_CONFIG.nativeCurrency.symbol}?`,
+      domainName: domainName,
       type: "default",
       onConfirm: async () => {
         setConfirmModal({ ...confirmModal, isOpen: false });
         setIsLoading(true);
         setIsAwaitingSignature(true);
+        setTxStatus('signature');
 
         try {
+          const submittingTimeout = setTimeout(() => {
+            setTxStatus('submitting');
+          }, 1000);
+          
+          const confirmingTimeout = setTimeout(() => {
+            setTxStatus('confirming');
+          }, 3000);
+          
           const txHash = await sdk.listTokenDirect(tokenId, listPrice);
+          
+          clearTimeout(submittingTimeout);
+          clearTimeout(confirmingTimeout);
+          
           setIsAwaitingSignature(false);
+          setTxStatus(null);
 
           if (txHash) {
             showSuccess(
@@ -403,6 +436,7 @@ const MyDomains: React.FC = () => {
         } catch (err: any) {
           console.error("Error listing token:", err);
           setIsAwaitingSignature(false);
+          setTxStatus(null);
           showError("Listing Failed", err.message || "Failed to list domain");
         } finally {
           setIsLoading(false);
@@ -504,10 +538,10 @@ const MyDomains: React.FC = () => {
           <div className="loading-overlay">
             <div className="loading">
               <div className="spinner"></div>
-              <p>
-                {isAwaitingSignature 
-                  ? "Waiting for your signature..." 
-                  : ""}
+              <p className={txStatus === 'signature' ? 'tx-status-signature' : txStatus === 'submitting' ? 'tx-status-submitting' : txStatus === 'confirming' ? 'tx-status-confirming' : ''}>
+                {isAwaitingSignature && txStatus === 'signature' && "Waiting for your signature..."}
+                {isAwaitingSignature && txStatus === 'submitting' && "Submitting transaction..."}
+                {isAwaitingSignature && txStatus === 'confirming' && "Waiting for transaction confirmation..."}
               </p>
             </div>
           </div>
@@ -553,15 +587,16 @@ const MyDomains: React.FC = () => {
           </>
         ) : null}
 
-        <ConfirmationModal
-          isOpen={confirmModal.isOpen}
-          title={confirmModal.title}
-          message={confirmModal.message}
-          onConfirm={confirmModal.onConfirm}
-          onCancel={() => setConfirmModal({ ...confirmModal, isOpen: false })}
-          type={confirmModal.type}
-          isLoading={isLoading || isAwaitingSignature}
-        />
+      <ConfirmationModal
+        isOpen={confirmModal.isOpen}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        domainName={confirmModal.domainName}
+        onConfirm={confirmModal.onConfirm}
+        onCancel={() => setConfirmModal({ ...confirmModal, isOpen: false })}
+        type={confirmModal.type}
+        isLoading={isLoading || isAwaitingSignature}
+      />
       </div>
     </div>
   );

@@ -766,6 +766,27 @@
 .loading p {
   font-size: 18px;
   color: #666;
+  font-weight: 500;
+  margin: 0;
+  text-align: center;
+  min-height: 24px;
+  transition: color 0.3s ease;
+}
+
+/* Transaction status message styles */
+.loading p.tx-status-signature {
+  color: #667eea;
+  font-weight: 600;
+}
+
+.loading p.tx-status-submitting {
+  color: #ff9800;
+  font-weight: 600;
+}
+
+.loading p.tx-status-confirming {
+  color: #3b82f6;
+  font-weight: 600;
 }
 
 .loading-card {
