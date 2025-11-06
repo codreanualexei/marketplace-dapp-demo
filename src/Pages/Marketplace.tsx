@@ -137,6 +137,7 @@ const Marketplace: React.FC = () => {
   const [totalListings, setTotalListings] = useState(0);
   const [isLoadingCount, setIsLoadingCount] = useState(false);
   const [isLoadingPage, setIsLoadingPage] = useState(false);
+  const [isDataReady, setIsDataReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [buyingListingId, setBuyingListingId] = useState<number | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -236,10 +237,16 @@ const Marketplace: React.FC = () => {
       const endTime = Date.now();
       console.log(`Loaded page ${currentPage} in ${endTime - startTime}ms:`, validListings);
       console.log(`Found ${validListings.length} active listings on page ${currentPage}`);
+      
+      // Add a small delay to ensure all state updates are complete before showing cards
+      // This prevents flickering and weird loading states
+      await new Promise(resolve => setTimeout(resolve, 100));
+      setIsDataReady(true);
 
     } catch (err: any) {
       console.error("Error loading marketplace:", err);
       setError("Failed to load marketplace listings");
+      setIsDataReady(true);
     } finally {
       setIsLoadingPage(false);
       isLoadingPageRef.current = false;
@@ -257,6 +264,7 @@ const Marketplace: React.FC = () => {
       setIsLoadingCount(false);
       setIsLoadingPage(false);
       setLoadedDomainsCount(0);
+      setIsDataReady(false);
       // Reset refs
       isLoadingCountRef.current = false;
       isLoadingPageRef.current = false;
@@ -409,11 +417,12 @@ const Marketplace: React.FC = () => {
 
   // Pagination logic
   // Show loading until page loads OR awaiting signature
-  const isFullyLoading = isLoadingPage || isAwaitingSignature;
+  const isFullyLoading = isLoadingPage || !isDataReady || isAwaitingSignature;
   
   const totalPages = Math.ceil(totalListings / ITEMS_PER_PAGE);
 
   const handlePageChange = (page: number) => {
+    setIsDataReady(false); // Reset data ready when changing pages
     setCurrentPage(page);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };

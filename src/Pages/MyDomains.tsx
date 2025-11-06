@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useWallet } from "../contexts/WalletContext";
 import { useToast } from "../contexts/ToastContext";
 import { useMarketplaceSDK } from "../hooks/useMarketplaceSDK";
@@ -181,6 +181,7 @@ const MyDomains: React.FC = () => {
   const [myDomains, setMyDomains] = useState<FormattedToken[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingApprovals, setIsLoadingApprovals] = useState(false);
+  const [isDataReady, setIsDataReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [listingTokenId, setListingTokenId] = useState<number | null>(null);
   const [listPrice, setListPrice] = useState<string>("");
@@ -204,17 +205,10 @@ const MyDomains: React.FC = () => {
     type: "default",
   });
 
-  // Show loading screen until all data is loaded (domains + approval status) OR awaiting signature
-  const isFullyLoading = isLoading || isLoadingApprovals || isAwaitingSignature;
+  // Show loading screen until all data is loaded (domains + approval status + data ready) OR awaiting signature
+  const isFullyLoading = isLoading || isLoadingApprovals || !isDataReady || isAwaitingSignature;
 
-  // Load domains when component mounts and SDK is available
-  useEffect(() => {
-    if (sdk && account) {
-      loadMyDomains();
-    }
-  }, [sdk, account]);
-
-  const loadMyDomains = async () => {
+  const loadMyDomains = useCallback(async () => {
     if (!sdk || !account) {
       console.warn("Cannot load domains: SDK or account not available");
       return;
@@ -244,6 +238,7 @@ const MyDomains: React.FC = () => {
         // No domains, so no need to check approvals
         setIsLoadingApprovals(false);
         setMyDomains(domains);
+        setIsDataReady(true);
         return;
       }
       
@@ -252,14 +247,30 @@ const MyDomains: React.FC = () => {
       
       // Check approval status for all domains (this must complete before showing cards)
       await checkApprovalStatusForAll(domains);
+      
+      // Add a small delay to ensure all state updates are complete before showing cards
+      // This prevents flickering and weird loading states
+      await new Promise(resolve => setTimeout(resolve, 100));
+      setIsDataReady(true);
     } catch (err: any) {
       console.error("Error loading domains:", err);
       setError(`Failed to load your domains: ${err.message || 'Unknown error'}`);
       setIsLoadingApprovals(false);
+      setIsDataReady(true);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [sdk, account]);
+
+  // Load domains when component mounts and SDK is available
+  useEffect(() => {
+    if (sdk && account) {
+      setIsDataReady(false); // Reset data ready state when loading starts
+      loadMyDomains();
+    } else {
+      setIsDataReady(false);
+    }
+  }, [sdk, account, loadMyDomains]);
 
   const checkApprovalStatusForAll = async (domains: FormattedToken[]) => {
     if (!sdk) {

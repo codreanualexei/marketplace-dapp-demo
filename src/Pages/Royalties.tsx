@@ -132,6 +132,7 @@ const Royalties: React.FC = () => {
   const { showSuccess, showError } = useToast();
   const [ownedDomains, setOwnedDomains] = useState<FormattedToken[]>([]);
   const [isLoadingDomains, setIsLoadingDomains] = useState(false);
+  const [isDataReady, setIsDataReady] = useState(false);
   const [loadedDomainsCount, setLoadedDomainsCount] = useState(0);
   const [totalDomainsToLoad, setTotalDomainsToLoad] = useState(0);
   const [marketplaceFees, setMarketplaceFees] = useState<string>("0");
@@ -227,6 +228,7 @@ const Royalties: React.FC = () => {
 
       if (createdDomains.length === 0) {
         setIsLoadingDomains(false);
+        setIsDataReady(true);
         return;
       }
 
@@ -256,10 +258,16 @@ const Royalties: React.FC = () => {
       const endTime = Date.now();
       console.log(`Loaded ${sortedDomains.length} created domains in ${endTime - startTime}ms`);
       console.log(`Domains with royalties: ${sortedDomains.filter(d => d.royaltyBalance && parseFloat(d.royaltyBalance) > 0).length}`);
+      
+      // Add a small delay to ensure all state updates are complete before showing cards
+      // This prevents flickering and weird loading states
+      await new Promise(resolve => setTimeout(resolve, 100));
+      setIsDataReady(true);
     } catch (err: any) {
       console.error("Error loading created domains:", err);
       setError(`Failed to load created domains: ${err.message || 'Unknown error'}`);
       setOwnedDomains([]);
+      setIsDataReady(true);
     } finally {
       setIsLoadingDomains(false);
     }
@@ -268,9 +276,12 @@ const Royalties: React.FC = () => {
   // Load initial data
   useEffect(() => {
     if (sdk && account) {
+      setIsDataReady(false); // Reset data ready state when loading starts
       loadBalances();
       loadOwnedDomains();
       checkAdmin();
+    } else {
+      setIsDataReady(false);
     }
   }, [sdk, account, loadBalances, loadOwnedDomains, checkAdmin]);
 
@@ -461,8 +472,8 @@ const Royalties: React.FC = () => {
         </div>
         )}
 
-        {/* Show loading overlay when awaiting signature OR loading domains */}
-        {isAwaitingSignature || isLoadingDomains ? (
+        {/* Show loading overlay when awaiting signature OR loading domains OR data not ready */}
+        {isAwaitingSignature || isLoadingDomains || !isDataReady ? (
           <div className="loading-overlay">
             <div className="loading">
               <div className="spinner"></div>

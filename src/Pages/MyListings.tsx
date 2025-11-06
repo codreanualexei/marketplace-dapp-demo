@@ -209,6 +209,7 @@ const MyListings: React.FC = () => {
   const { showSuccess, showError } = useToast();
   const [myListings, setMyListings] = useState<ListedToken[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isDataReady, setIsDataReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [updatingListingId, setUpdatingListingId] = useState<number | null>(
     null,
@@ -259,9 +260,15 @@ const MyListings: React.FC = () => {
       console.log(`Loaded ${listings.length} listings in ${endTime - startTime}ms`);
 
       setMyListings(listings);
+      
+      // Add a small delay to ensure all state updates are complete before showing cards
+      // This prevents flickering and weird loading states
+      await new Promise(resolve => setTimeout(resolve, 100));
+      setIsDataReady(true);
     } catch (err: any) {
       console.error("Error loading listings:", err);
       setError("Failed to load your listings");
+      setIsDataReady(true);
     } finally {
       setIsLoading(false);
     }
@@ -269,7 +276,10 @@ const MyListings: React.FC = () => {
 
   useEffect(() => {
     if (sdk && account) {
+      setIsDataReady(false); // Reset data ready state when loading starts
       loadMyListings();
+    } else {
+      setIsDataReady(false);
     }
   }, [sdk, account, loadMyListings]);
 
@@ -497,8 +507,8 @@ const MyListings: React.FC = () => {
           </div>
         )}
 
-        {/* Show loading screen when loading OR awaiting signature */}
-        {isLoading || isAwaitingSignature ? (
+        {/* Show loading screen when loading OR awaiting signature OR data not ready */}
+        {isLoading || !isDataReady || isAwaitingSignature ? (
           <div className="loading-overlay">
             <div className="loading">
               <div className="spinner"></div>
