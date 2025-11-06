@@ -203,7 +203,19 @@
   line-height: 1.6;
 }
 
-@media (max-width: 768px) {
+/* Tablet and Laptop (768px - 1024px) */
+@media (min-width: 768px) and (max-width: 1024px) {
+  .mint {
+    padding: 40px 24px;
+  }
+
+  .mint-container {
+    max-width: 700px;
+  }
+}
+
+/* Mobile (up to 767px) */
+@media (max-width: 767px) {
   .mint {
     padding: 20px 16px;
   }
@@ -212,7 +224,50 @@
     padding: 24px;
   }
 
+  .page-header h1 {
+    font-size: 28px;
+  }
+
+  .page-header p {
+    font-size: 16px;
+  }
+
+  .form-group input {
+    font-size: 16px; /* Prevents zoom on iOS */
+    padding: 14px 16px;
+    min-height: 44px; /* Touch-friendly */
+  }
+
+  .mint-button {
+    min-height: 48px; /* Touch-friendly */
+    font-size: 16px;
+  }
+
   .example-uri code {
     font-size: 12px;
+    word-break: break-all;
+  }
+
+  .no-access {
+    padding: 40px 24px;
+  }
+
+  .no-access h2 {
+    font-size: 24px;
+  }
+}
+
+/* Small Mobile (up to 480px) */
+@media (max-width: 480px) {
+  .mint {
+    padding: 16px 12px;
+  }
+
+  .mint-card {
+    padding: 20px;
+  }
+
+  .page-header h1 {
+    font-size: 24px;
   }
 }

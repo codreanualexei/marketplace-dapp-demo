@@ -7,7 +7,31 @@ import { NETWORK_CONFIG } from "../config/network";
 import Pagination from "../Components/Pagination";
 import { useNFTMetadata, getTokenURI } from "../hooks/useNFTMetadata";
 import { NFTMetadataDisplay } from "../Components/NFTMetadata";
+import ConfirmationModal from "../Components/ConfirmationModal";
 import "./MyDomains.css";
+
+// Helper function to get domain name from tokenURI
+const getDomainName = async (tokenURI: string | null, tokenId: number): Promise<string> => {
+  if (!tokenURI) return `Domain #${tokenId}`;
+  
+  try {
+    let url = tokenURI;
+    if (url.startsWith('ipfs://')) {
+      const ipfsHash = url.replace('ipfs://', '');
+      url = `https://ipfs.io/ipfs/${ipfsHash}`;
+    }
+    
+    const response = await fetch(url);
+    if (response.ok) {
+      const metadata = await response.json();
+      return metadata.name || `Domain #${tokenId}`;
+    }
+  } catch (err) {
+    console.error("Error fetching domain name:", err);
+  }
+  
+  return `Domain #${tokenId}`;
+};
 
 const ITEMS_PER_PAGE = 12;
 
@@ -23,7 +47,7 @@ const DomainCard: React.FC<{
   isLoading: boolean;
   checkingApproval: Record<number, boolean>;
   tokenApprovalStatus: Record<number, boolean>;
-  handleApprove: (tokenId: number) => void;
+  handleApprove: (tokenId: number, domainName: string) => void;
   handleListForSale: (tokenId: number) => void;
   formatAddress: (address: string) => string;
 }> = ({ domain, tokenURI, listingTokenId, listPrice, setListPrice, handleCancelList, handleConfirmList, isLoading, checkingApproval, tokenApprovalStatus, handleApprove, handleListForSale, formatAddress }) => {
@@ -137,7 +161,7 @@ const DomainCard: React.FC<{
             ) : (
               <button
                 className="action-button secondary"
-                onClick={() => handleApprove(domain.tokenId)}
+                onClick={() => handleApprove(domain.tokenId, metadata?.name || `Domain #${domain.tokenId}`)}
                 disabled={isLoading}
               >
                 Approve for Sale
@@ -164,6 +188,19 @@ const MyDomains: React.FC = () => {
   const [tokenApprovalStatus, setTokenApprovalStatus] = useState<Record<number, boolean>>({});
   const [checkingApproval, setCheckingApproval] = useState<Record<number, boolean>>({});
   const [isAwaitingSignature, setIsAwaitingSignature] = useState(false);
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    type?: "default" | "danger" | "warning";
+  }>({
+    isOpen: false,
+    title: "",
+    message: "",
+    onConfirm: () => {},
+    type: "default",
+  });
 
   // Show loading screen until all data is loaded (domains + approval status) OR awaiting signature
   const isFullyLoading = isLoading || isLoadingApprovals || isAwaitingSignature;
@@ -283,40 +320,43 @@ const MyDomains: React.FC = () => {
     setListPrice("");
   };
 
-  const handleApproveToken = async (tokenId: number) => {
+  const handleApproveToken = async (tokenId: number, domainName: string) => {
     if (!sdk) return;
 
-    const confirmed = window.confirm(
-      `Approve Domain #${tokenId} for marketplace listing?`,
-    );
+    setConfirmModal({
+      isOpen: true,
+      title: "Approve Domain",
+      message: `Approve ${domainName} for marketplace listing?`,
+      type: "default",
+      onConfirm: async () => {
+        setConfirmModal({ ...confirmModal, isOpen: false });
+        setIsLoading(true);
+        setIsAwaitingSignature(true);
 
-    if (!confirmed) return;
+        try {
+          const txHash = await sdk.approveTokenForSale(tokenId);
+          setIsAwaitingSignature(false);
 
-    setIsLoading(true);
-    setIsAwaitingSignature(true);
-
-    try {
-      const txHash = await sdk.approveTokenForSale(tokenId);
-      setIsAwaitingSignature(false);
-
-      if (txHash) {
-        showSuccess(
-          "Domain Approved! ✅",
-          `Domain #${tokenId} has been approved for marketplace listing.`,
-          txHash
-        );
-        // Check approval status again
-        await checkApprovalStatus(tokenId);
-      } else {
-        showError("Approval Failed", "Failed to approve domain for marketplace.");
-      }
-    } catch (err: any) {
-      console.error("Error approving token:", err);
-      setIsAwaitingSignature(false);
-      showError("Approval Failed", err.message || "Failed to approve domain");
-    } finally {
-      setIsLoading(false);
-    }
+          if (txHash) {
+            showSuccess(
+              "Domain Approved! ✅",
+              `${domainName} has been approved for marketplace listing.`,
+              txHash
+            );
+            // Check approval status again
+            await checkApprovalStatus(tokenId);
+          } else {
+            showError("Approval Failed", "Failed to approve domain for marketplace.");
+          }
+        } catch (err: any) {
+          console.error("Error approving token:", err);
+          setIsAwaitingSignature(false);
+          showError("Approval Failed", err.message || "Failed to approve domain");
+        } finally {
+          setIsLoading(false);
+        }
+      },
+    });
   };
 
   const handleConfirmList = async (tokenId: number) => {
@@ -325,42 +365,50 @@ const MyDomains: React.FC = () => {
       return;
     }
 
-    const confirmed = window.confirm(
-      `List Domain #${tokenId} for ${listPrice} ${NETWORK_CONFIG.nativeCurrency.symbol}?`,
-    );
+    // Find the domain to get its name
+    const domain = myDomains.find(d => d.tokenId === tokenId);
+    const tokenURI = domain ? (getTokenURI(domain) || domain.uri) : null;
+    const domainName = domain ? (await getDomainName(tokenURI, tokenId)) : `Domain #${tokenId}`;
 
-    if (!confirmed) return;
+    setConfirmModal({
+      isOpen: true,
+      title: "List Domain for Sale",
+      message: `List ${domainName} for ${listPrice} ${NETWORK_CONFIG.nativeCurrency.symbol}?`,
+      type: "default",
+      onConfirm: async () => {
+        setConfirmModal({ ...confirmModal, isOpen: false });
+        setIsLoading(true);
+        setIsAwaitingSignature(true);
 
-    setIsLoading(true);
-    setIsAwaitingSignature(true);
+        try {
+          const txHash = await sdk.listTokenDirect(tokenId, listPrice);
+          setIsAwaitingSignature(false);
 
-    try {
-      const txHash = await sdk.listTokenDirect(tokenId, listPrice);
-      setIsAwaitingSignature(false);
-
-      if (txHash) {
-        showSuccess(
-          "Domain Listed! 🚀",
-          `Domain #${tokenId} has been listed for ${listPrice} ${NETWORK_CONFIG.nativeCurrency.symbol}.`,
-          txHash
-        );
-        setListingTokenId(null);
-        setListPrice("");
-        // Reload domains
-        await loadMyDomains();
-      } else {
-        showError(
-          "Listing Failed",
-          "Failed to list domain. Make sure you own it and it's not already listed."
-        );
-      }
-    } catch (err: any) {
-      console.error("Error listing token:", err);
-      setIsAwaitingSignature(false);
-      showError("Listing Failed", err.message || "Failed to list domain");
-    } finally {
-      setIsLoading(false);
-    }
+          if (txHash) {
+            showSuccess(
+              "Domain Listed! 🚀",
+              `${domainName} has been listed for ${listPrice} ${NETWORK_CONFIG.nativeCurrency.symbol}.`,
+              txHash
+            );
+            setListingTokenId(null);
+            setListPrice("");
+            // Reload domains
+            await loadMyDomains();
+          } else {
+            showError(
+              "Listing Failed",
+              "Failed to list domain. Make sure you own it and it's not already listed."
+            );
+          }
+        } catch (err: any) {
+          console.error("Error listing token:", err);
+          setIsAwaitingSignature(false);
+          showError("Listing Failed", err.message || "Failed to list domain");
+        } finally {
+          setIsLoading(false);
+        }
+      },
+    });
   };
 
   const formatAddress = (address: string) => {
@@ -459,9 +507,7 @@ const MyDomains: React.FC = () => {
               <p>
                 {isAwaitingSignature 
                   ? "Waiting for your signature..." 
-                  : isLoading 
-                    ? "Loading your domains..." 
-                    : "Loading approval status..."}
+                  : ""}
               </p>
             </div>
           </div>
@@ -506,6 +552,16 @@ const MyDomains: React.FC = () => {
             />
           </>
         ) : null}
+
+        <ConfirmationModal
+          isOpen={confirmModal.isOpen}
+          title={confirmModal.title}
+          message={confirmModal.message}
+          onConfirm={confirmModal.onConfirm}
+          onCancel={() => setConfirmModal({ ...confirmModal, isOpen: false })}
+          type={confirmModal.type}
+          isLoading={isLoading || isAwaitingSignature}
+        />
       </div>
     </div>
   );

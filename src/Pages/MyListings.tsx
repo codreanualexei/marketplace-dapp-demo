@@ -7,7 +7,31 @@ import { NETWORK_CONFIG } from "../config/network";
 import Pagination from "../Components/Pagination";
 import { useNFTMetadata, getTokenURI } from "../hooks/useNFTMetadata";
 import { NFTMetadataDisplay } from "../Components/NFTMetadata";
+import ConfirmationModal from "../Components/ConfirmationModal";
 import "./MyListings.css";
+
+// Helper function to get domain name from tokenURI
+const getDomainNameFromURI = async (tokenURI: string | null, tokenId: number | undefined): Promise<string> => {
+  if (!tokenURI) return `Domain #${tokenId || 'Unknown'}`;
+  
+  try {
+    let url = tokenURI;
+    if (url.startsWith('ipfs://')) {
+      const ipfsHash = url.replace('ipfs://', '');
+      url = `https://ipfs.io/ipfs/${ipfsHash}`;
+    }
+    
+    const response = await fetch(url);
+    if (response.ok) {
+      const metadata = await response.json();
+      return metadata.name || `Domain #${tokenId || 'Unknown'}`;
+    }
+  } catch (err) {
+    console.error("Error fetching domain name:", err);
+  }
+  
+  return `Domain #${tokenId || 'Unknown'}`;
+};
 
 const ITEMS_PER_PAGE = 12;
 
@@ -196,6 +220,19 @@ const MyListings: React.FC = () => {
   const [activeCurrentPage, setActiveCurrentPage] = useState(1);
   const [soldCurrentPage, setSoldCurrentPage] = useState(1);
   const [isAwaitingSignature, setIsAwaitingSignature] = useState(false);
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    type?: "default" | "danger" | "warning";
+  }>({
+    isOpen: false,
+    title: "",
+    message: "",
+    onConfirm: () => {},
+    type: "default",
+  });
 
   // Calculate stats (will be 0 initially, then update when data loads)
   // Calculate before loading check so stats are always available
@@ -250,85 +287,101 @@ const MyListings: React.FC = () => {
       return;
     }
 
-    const confirmed = window.confirm(
-      `Update listing #${listingId} to ${newPrice} ${NETWORK_CONFIG.nativeCurrency.symbol}?`,
-    );
+    // Find the listing to get domain name
+    const listing = myListings.find(l => l.listingId === listingId);
+    const tokenURI = listing ? getTokenURI(listing.tokenData) : null;
+    const domainName = listing ? (await getDomainNameFromURI(tokenURI, listing.tokenId)) : `Listing #${listingId}`;
 
-    if (!confirmed) return;
+    setConfirmModal({
+      isOpen: true,
+      title: "Update Listing Price",
+      message: `Update ${domainName} listing to ${newPrice} ${NETWORK_CONFIG.nativeCurrency.symbol}?`,
+      type: "default",
+      onConfirm: async () => {
+        setConfirmModal({ ...confirmModal, isOpen: false });
+        setIsLoading(true);
+        setIsAwaitingSignature(true);
 
-    setIsLoading(true);
-    setIsAwaitingSignature(true);
+        try {
+          const txHash = await sdk.updateListing(listingId, newPrice);
+          setIsAwaitingSignature(false);
 
-    try {
-      const txHash = await sdk.updateListing(listingId, newPrice);
-      setIsAwaitingSignature(false);
-
-      if (txHash) {
-        showSuccess(
-          "Price Updated Successfully! ✅",
-          `Listing #${listingId} price updated to ${newPrice} ${NETWORK_CONFIG.nativeCurrency.symbol}`,
-          txHash
-        );
-        setUpdatingListingId(null);
-        setNewPrice("");
-        await loadMyListings();
-      } else {
-        showError("Update Failed", "Failed to update price. Please try again.");
-      }
-    } catch (err: any) {
-      console.error("Error updating listing:", err);
-      setIsAwaitingSignature(false);
-      showError("Update Error", err.message || "Failed to update price");
-    } finally {
-      setIsLoading(false);
-    }
+          if (txHash) {
+            showSuccess(
+              "Price Updated Successfully! ✅",
+              `${domainName} listing price updated to ${newPrice} ${NETWORK_CONFIG.nativeCurrency.symbol}`,
+              txHash
+            );
+            setUpdatingListingId(null);
+            setNewPrice("");
+            await loadMyListings();
+          } else {
+            showError("Update Failed", "Failed to update price. Please try again.");
+          }
+        } catch (err: any) {
+          console.error("Error updating listing:", err);
+          setIsAwaitingSignature(false);
+          showError("Update Error", err.message || "Failed to update price");
+        } finally {
+          setIsLoading(false);
+        }
+      },
+    });
   };
 
   const handleCancelListing = async (listingId: number) => {
     if (!sdk) return;
 
-    const confirmed = window.confirm(
-      `Cancel listing #${listingId}? This will remove it from the marketplace.`,
-    );
+    // Find the listing to get domain name
+    const listing = myListings.find(l => l.listingId === listingId);
+    const tokenURI = listing ? getTokenURI(listing.tokenData) : null;
+    const domainName = listing ? (await getDomainNameFromURI(tokenURI, listing.tokenId)) : `Listing #${listingId}`;
 
-    if (!confirmed) return;
+    setConfirmModal({
+      isOpen: true,
+      title: "Cancel Listing",
+      message: `Cancel ${domainName} listing? This will remove it from the marketplace.`,
+      type: "danger",
+      onConfirm: async () => {
+        setConfirmModal({ ...confirmModal, isOpen: false });
+        setCancelingListingId(listingId);
+        setIsAwaitingSignature(true);
 
-    setCancelingListingId(listingId);
-    setIsAwaitingSignature(true);
+        try {
+          const txHash = await sdk.cancelListing(listingId);
+          setIsAwaitingSignature(false);
 
-    try {
-      const txHash = await sdk.cancelListing(listingId);
-      setIsAwaitingSignature(false);
-
-      if (txHash) {
-        showSuccess(
-          "Listing Cancelled Successfully! ✅",
-          `Listing #${listingId} has been removed from the marketplace`,
-          txHash
-        );
-        await loadMyListings();
-      } else {
-        showError("Cancel Failed", "Failed to cancel listing. Please try again.");
-      }
-    } catch (err: any) {
-      console.error("Error cancelling listing:", err);
-      
-      // Simple error message - let user try again
-      let errorMessage = err.message || "Failed to cancel listing";
-      
-      if (errorMessage.includes("switch to") || errorMessage.includes("Chain ID:")) {
-        errorMessage += " Please switch to the correct network in your wallet and try again.";
-      } else if (errorMessage.includes("user rejected")) {
-        errorMessage += " Transaction was cancelled. You can try again if needed.";
-      } else {
-        errorMessage += " Please try again. If the issue persists, check your network connection.";
-      }
-      
-      showError("Cancel Error", errorMessage);
-      setIsAwaitingSignature(false);
-    } finally {
-      setCancelingListingId(null);
-    }
+          if (txHash) {
+            showSuccess(
+              "Listing Cancelled Successfully! ✅",
+              `${domainName} listing has been removed from the marketplace`,
+              txHash
+            );
+            await loadMyListings();
+          } else {
+            showError("Cancel Failed", "Failed to cancel listing. Please try again.");
+          }
+        } catch (err: any) {
+          console.error("Error cancelling listing:", err);
+          
+          // Simple error message - let user try again
+          let errorMessage = err.message || "Failed to cancel listing";
+          
+          if (errorMessage.includes("switch to") || errorMessage.includes("Chain ID:")) {
+            errorMessage += " Please switch to the correct network in your wallet and try again.";
+          } else if (errorMessage.includes("user rejected")) {
+            errorMessage += " Transaction was cancelled. You can try again if needed.";
+          } else {
+            errorMessage += " Please try again. If the issue persists, check your network connection.";
+          }
+          
+          showError("Cancel Error", errorMessage);
+          setIsAwaitingSignature(false);
+        } finally {
+          setCancelingListingId(null);
+        }
+      },
+    });
   };
 
   if (!account) {
@@ -418,7 +471,7 @@ const MyListings: React.FC = () => {
               <p>
                 {isAwaitingSignature 
                   ? "Waiting for your signature..." 
-                  : "Loading your listings..."}
+                  : ""}
               </p>
             </div>
           </div>
@@ -484,6 +537,16 @@ const MyListings: React.FC = () => {
             )}
           </>
         )}
+
+        <ConfirmationModal
+          isOpen={confirmModal.isOpen}
+          title={confirmModal.title}
+          message={confirmModal.message}
+          onConfirm={confirmModal.onConfirm}
+          onCancel={() => setConfirmModal({ ...confirmModal, isOpen: false })}
+          type={confirmModal.type}
+          isLoading={isLoading || isAwaitingSignature}
+        />
       </div>
     </div>
   );

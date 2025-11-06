@@ -6,7 +6,31 @@ import { FormattedToken } from "../sdk/MarketplaceSDK";
 import { ethers } from "ethers";
 import { useNFTMetadata, getTokenURI } from "../hooks/useNFTMetadata";
 import { NFTMetadataDisplay } from "../Components/NFTMetadata";
+import ConfirmationModal from "../Components/ConfirmationModal";
 import "./Royalties.css";
+
+// Helper function to get domain name from tokenURI
+const getDomainNameFromURI = async (tokenURI: string | null, tokenId: number | undefined): Promise<string> => {
+  if (!tokenURI) return `Domain #${tokenId || 'Unknown'}`;
+  
+  try {
+    let url = tokenURI;
+    if (url.startsWith('ipfs://')) {
+      const ipfsHash = url.replace('ipfs://', '');
+      url = `https://ipfs.io/ipfs/${ipfsHash}`;
+    }
+    
+    const response = await fetch(url);
+    if (response.ok) {
+      const metadata = await response.json();
+      return metadata.name || `Domain #${tokenId || 'Unknown'}`;
+    }
+  } catch (err) {
+    console.error("Error fetching domain name:", err);
+  }
+  
+  return `Domain #${tokenId || 'Unknown'}`;
+};
 
 // Royalty domain card component with metadata
 const RoyaltyDomainCard: React.FC<{
@@ -116,6 +140,19 @@ const Royalties: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [withdrawing, setWithdrawing] = useState<string | null>(null);
   const [isAwaitingSignature, setIsAwaitingSignature] = useState(false);
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    type?: "default" | "danger" | "warning";
+  }>({
+    isOpen: false,
+    title: "",
+    message: "",
+    onConfirm: () => {},
+    type: "default",
+  });
 
   // Calculate stats for animation - must be called before any early returns
   const getTotalRoyalties = () => {
@@ -240,78 +277,87 @@ const Royalties: React.FC = () => {
 
     // Find the domain that has this splitter address
     const domain = ownedDomains.find(d => d.splitterAddress === splitterAddress);
-    const domainInfo = domain ? `Domain #${domain.tokenId}` : 'this domain';
+    if (!domain) return;
 
-    const confirmed = window.confirm(
-      `Withdraw your royalties from ${domainInfo}?\n\nThis will withdraw all pending royalties from the splitter contract.`,
-    );
+    const tokenURI = getTokenURI(domain) || domain.uri;
+    const domainName = await getDomainNameFromURI(tokenURI, domain.tokenId);
 
-    if (!confirmed) return;
+    setConfirmModal({
+      isOpen: true,
+      title: "Withdraw Royalties",
+      message: `Withdraw your royalties from ${domainName}?\n\nThis will withdraw all pending royalties from the splitter contract.`,
+      type: "default",
+      onConfirm: async () => {
+        setConfirmModal({ ...confirmModal, isOpen: false });
+        setWithdrawing(splitterAddress);
+        setIsAwaitingSignature(true);
 
-    setWithdrawing(splitterAddress);
-    setIsAwaitingSignature(true);
+        try {
+          const result = await sdk.withdrawRoyaltyFromSplitter(splitterAddress);
+          setIsAwaitingSignature(false);
 
-    try {
-      const result = await sdk.withdrawRoyaltyFromSplitter(splitterAddress);
-      setIsAwaitingSignature(false);
-
-      if (result) {
-        showSuccess(
-          "Withdrawal Successful! ✅",
-          `Withdrawn ${result.withdrawn} MATIC from ${domainInfo}`,
-          result.transactionHash
-        );
-        // Refresh created domains
-        await loadOwnedDomains();
-      } else {
-        showError("Withdrawal Failed", "Withdrawal failed. Please try again.");
-      }
-    } catch (err: any) {
-      console.error("Error withdrawing:", err);
-      setIsAwaitingSignature(false);
-      showError("Withdrawal Error", err.message || "Failed to withdraw");
-    } finally {
-      setWithdrawing(null);
-    }
+          if (result) {
+            showSuccess(
+              "Withdrawal Successful! ✅",
+              `Withdrawn ${result.withdrawn} MATIC from ${domainName}`,
+              result.transactionHash
+            );
+            // Refresh created domains
+            await loadOwnedDomains();
+          } else {
+            showError("Withdrawal Failed", "Withdrawal failed. Please try again.");
+          }
+        } catch (err: any) {
+          console.error("Error withdrawing:", err);
+          setIsAwaitingSignature(false);
+          showError("Withdrawal Error", err.message || "Failed to withdraw");
+        } finally {
+          setWithdrawing(null);
+        }
+      },
+    });
   };
 
 
   const handleWithdrawMarketplaceFees = async () => {
     if (!sdk) return;
 
-    const confirmed = window.confirm(
-      `Withdraw marketplace fees?\nAmount: ${marketplaceFees} MATIC`,
-    );
+    setConfirmModal({
+      isOpen: true,
+      title: "Withdraw Marketplace Fees",
+      message: `Withdraw marketplace fees?\nAmount: ${marketplaceFees} MATIC`,
+      type: "default",
+      onConfirm: async () => {
+        setConfirmModal({ ...confirmModal, isOpen: false });
+        setWithdrawing("marketplace");
+        setIsAwaitingSignature(true);
 
-    if (!confirmed) return;
+        try {
+          const txHash = await sdk.withdrawMarketPlaceFees();
+          setIsAwaitingSignature(false);
 
-    setWithdrawing("marketplace");
-    setIsAwaitingSignature(true);
-
-    try {
-      const txHash = await sdk.withdrawMarketPlaceFees();
-      setIsAwaitingSignature(false);
-
-      if (txHash) {
-        showSuccess(
-          "Marketplace Fees Withdrawn! ✅",
-          `Successfully withdrew marketplace fees`,
-          txHash
-        );
-        await loadBalances();
-      } else {
-        showError(
-          "Withdrawal Failed", 
-          "Withdrawal failed. Make sure you are an admin and there are fees to withdraw."
-        );
-      }
-    } catch (err: any) {
-      console.error("Error withdrawing marketplace fees:", err);
-      setIsAwaitingSignature(false);
-      showError("Withdrawal Error", err.message || "Failed to withdraw marketplace fees");
-    } finally {
-      setWithdrawing(null);
-    }
+          if (txHash) {
+            showSuccess(
+              "Marketplace Fees Withdrawn! ✅",
+              `Successfully withdrew marketplace fees`,
+              txHash
+            );
+            await loadBalances();
+          } else {
+            showError(
+              "Withdrawal Failed", 
+              "Withdrawal failed. Make sure you are an admin and there are fees to withdraw."
+            );
+          }
+        } catch (err: any) {
+          console.error("Error withdrawing marketplace fees:", err);
+          setIsAwaitingSignature(false);
+          showError("Withdrawal Error", err.message || "Failed to withdraw marketplace fees");
+        } finally {
+          setWithdrawing(null);
+        }
+      },
+    });
   };
 
   const formatAddress = (address: string) => {
@@ -390,7 +436,7 @@ const Royalties: React.FC = () => {
               <p>
                 {isAwaitingSignature 
                   ? "Waiting for your signature..." 
-                  : "Loading your created domains..."}
+                  : ""}
               </p>
             </div>
           </div>
@@ -514,6 +560,16 @@ const Royalties: React.FC = () => {
             </div>
           </>
         )}
+
+        <ConfirmationModal
+          isOpen={confirmModal.isOpen}
+          title={confirmModal.title}
+          message={confirmModal.message}
+          onConfirm={confirmModal.onConfirm}
+          onCancel={() => setConfirmModal({ ...confirmModal, isOpen: false })}
+          type={confirmModal.type}
+          isLoading={isLoading || isAwaitingSignature}
+        />
       </div>
     </div>
   );

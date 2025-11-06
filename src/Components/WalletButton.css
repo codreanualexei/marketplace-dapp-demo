@@ -200,11 +200,22 @@
   animation: slideDown 0.2s ease;
 }
 
-@media (max-width: 768px) {
+/* Tablet (768px - 1024px) */
+@media (min-width: 768px) and (max-width: 1024px) {
+  .wallet-connect-button,
+  .wallet-connected-button {
+    padding: 11px 20px;
+    font-size: 15px;
+  }
+}
+
+/* Mobile (up to 767px) */
+@media (max-width: 767px) {
   .wallet-connect-button,
   .wallet-connected-button {
     padding: 10px 16px;
     font-size: 14px;
+    min-height: 44px; /* Touch-friendly */
   }
 
   .wallet-balance,
@@ -214,5 +225,27 @@
 
   .wallet-dropdown {
     min-width: 240px;
+    right: 0;
+    left: auto;
+  }
+
+  .wallet-options-dropdown {
+    right: 0;
+    left: auto;
+  }
+}
+
+/* Small Mobile (up to 480px) */
+@media (max-width: 480px) {
+  .wallet-connect-button,
+  .wallet-connected-button {
+    padding: 10px 12px;
+    font-size: 13px;
+  }
+
+  .wallet-dropdown {
+    min-width: calc(100vw - 32px);
+    right: 16px;
+    left: 16px;
   }
 }

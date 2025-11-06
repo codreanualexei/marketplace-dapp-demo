@@ -7,7 +7,31 @@ import { NETWORK_CONFIG } from "../config/network";
 import Pagination from "../Components/Pagination";
 import { useNFTMetadata, getTokenURI } from "../hooks/useNFTMetadata";
 import { NFTMetadataDisplay } from "../Components/NFTMetadata";
+import ConfirmationModal from "../Components/ConfirmationModal";
 import "./Marketplace.css";
+
+// Helper function to get domain name from tokenURI
+const getDomainNameFromURI = async (tokenURI: string | null, tokenId: number | undefined): Promise<string> => {
+  if (!tokenURI) return `Domain #${tokenId || 'Unknown'}`;
+  
+  try {
+    let url = tokenURI;
+    if (url.startsWith('ipfs://')) {
+      const ipfsHash = url.replace('ipfs://', '');
+      url = `https://ipfs.io/ipfs/${ipfsHash}`;
+    }
+    
+    const response = await fetch(url);
+    if (response.ok) {
+      const metadata = await response.json();
+      return metadata.name || `Domain #${tokenId || 'Unknown'}`;
+    }
+  } catch (err) {
+    console.error("Error fetching domain name:", err);
+  }
+  
+  return `Domain #${tokenId || 'Unknown'}`;
+};
 
 const ITEMS_PER_PAGE = 12;
 
@@ -118,6 +142,19 @@ const Marketplace: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [loadedDomainsCount, setLoadedDomainsCount] = useState(0);
   const [isAwaitingSignature, setIsAwaitingSignature] = useState(false);
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    type?: "default" | "danger" | "warning";
+  }>({
+    isOpen: false,
+    title: "",
+    message: "",
+    onConfirm: () => {},
+    type: "default",
+  });
   
   // Use refs to track loading states and prevent infinite loops
   const isLoadingCountRef = useRef(false);
@@ -249,77 +286,84 @@ const Marketplace: React.FC = () => {
       return;
     }
 
-    const confirmed = window.confirm(
-      `Buy Domain #${listing.tokenId} for ${listing.price} ${NETWORK_CONFIG.nativeCurrency.symbol}?`,
-    );
+    // Get domain name from metadata
+    const tokenURI = getTokenURI(listing.tokenData);
+    const domainName = await getDomainNameFromURI(tokenURI, listing.tokenId);
 
-    if (!confirmed) return;
+    setConfirmModal({
+      isOpen: true,
+      title: "Purchase Domain",
+      message: `Buy ${domainName} for ${listing.price} ${NETWORK_CONFIG.nativeCurrency.symbol}?`,
+      type: "default",
+      onConfirm: async () => {
+        setConfirmModal({ ...confirmModal, isOpen: false });
+        setBuyingListingId(listing.listingId);
+        setIsAwaitingSignature(true);
 
-    setBuyingListingId(listing.listingId);
-    setIsAwaitingSignature(true);
+        try {
+          console.log(`Starting purchase for listing ${listing.listingId}...`);
+          const txHash = await sdk.buyToken(listing.listingId);
+          setIsAwaitingSignature(false);
 
-    try {
-      console.log(`Starting purchase for listing ${listing.listingId}...`);
-      const txHash = await sdk.buyToken(listing.listingId);
-      setIsAwaitingSignature(false);
-
-      if (txHash) {
-        console.log(`Purchase successful! Transaction: ${txHash}`);
-        showSuccess(
-          "Purchase Successful! 🎉",
-          `Domain #${listing.tokenId} has been purchased successfully.`,
-          txHash
-        );
-        
-        // Clear caches and reload everything after successful purchase
-        console.log("Refreshing marketplace after successful purchase...");
-        
-        // Clear SDK caches to ensure fresh data
-        sdk.clearCaches();
-        
-        // Reset loading refs to force fresh data
-        isLoadingCountRef.current = false;
-        isLoadingPageRef.current = false;
-        hasLoadedCountRef.current = false;
-        
-        // Small delay to ensure blockchain has processed the transaction
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        
-        // Reload total count first, then current page
-        await loadTotalCount();
-        await loadCurrentPage();
-      } else {
-        console.error("Purchase failed - no transaction hash returned");
-        showError("Purchase Failed", "No transaction hash returned. Please try again.");
-      }
-    } catch (err: any) {
-      console.error("Error buying token:", err);
-      
-      // Show more detailed error message
-      let errorMessage = "Failed to buy domain";
-      
-      if (err.message) {
-        errorMessage = err.message;
-        
-        // Add helpful suggestions based on error type
-        if (err.message.includes("insufficient")) {
-          errorMessage += `\n\n💡 Tip: Get testnet ${NETWORK_CONFIG.nativeCurrency.symbol} from the appropriate faucet for ${NETWORK_CONFIG.name}`;
-        } else if (err.message.includes("rejected")) {
-          errorMessage += "\n\n💡 Tip: Make sure to approve the transaction in your wallet.";
-        } else if (err.message.includes("timeout")) {
-          errorMessage += "\n\n💡 Tip: The transaction may still be processing. Check your wallet or try again in a few minutes.";
-        } else if (err.message.includes("network")) {
-          errorMessage += "\n\n💡 Tip: Check your internet connection and try again.";
-        } else if (err.message.includes("confirmation failed")) {
-          errorMessage += "\n\n💡 Tip: The transaction may have succeeded but confirmation failed. Check your wallet or refresh the page.";
+          if (txHash) {
+            console.log(`Purchase successful! Transaction: ${txHash}`);
+            showSuccess(
+              "Purchase Successful! 🎉",
+              `${domainName} has been purchased successfully.`,
+              txHash
+            );
+            
+            // Clear caches and reload everything after successful purchase
+            console.log("Refreshing marketplace after successful purchase...");
+            
+            // Clear SDK caches to ensure fresh data
+            sdk.clearCaches();
+            
+            // Reset loading refs to force fresh data
+            isLoadingCountRef.current = false;
+            isLoadingPageRef.current = false;
+            hasLoadedCountRef.current = false;
+            
+            // Small delay to ensure blockchain has processed the transaction
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // Reload total count first, then current page
+            await loadTotalCount();
+            await loadCurrentPage();
+          } else {
+            console.error("Purchase failed - no transaction hash returned");
+            showError("Purchase Failed", "No transaction hash returned. Please try again.");
+          }
+        } catch (err: any) {
+          console.error("Error buying token:", err);
+          
+          // Show more detailed error message
+          let errorMessage = "Failed to buy domain";
+          
+          if (err.message) {
+            errorMessage = err.message;
+            
+            // Add helpful suggestions based on error type
+            if (err.message.includes("insufficient")) {
+              errorMessage += `\n\n💡 Tip: Get testnet ${NETWORK_CONFIG.nativeCurrency.symbol} from the appropriate faucet for ${NETWORK_CONFIG.name}`;
+            } else if (err.message.includes("rejected")) {
+              errorMessage += "\n\n💡 Tip: Make sure to approve the transaction in your wallet.";
+            } else if (err.message.includes("timeout")) {
+              errorMessage += "\n\n💡 Tip: The transaction may still be processing. Check your wallet or try again in a few minutes.";
+            } else if (err.message.includes("network")) {
+              errorMessage += "\n\n💡 Tip: Check your internet connection and try again.";
+            } else if (err.message.includes("confirmation failed")) {
+              errorMessage += "\n\n💡 Tip: The transaction may have succeeded but confirmation failed. Check your wallet or refresh the page.";
+            }
+          }
+          
+          showError("Purchase Failed", errorMessage);
+          setIsAwaitingSignature(false);
+        } finally {
+          setBuyingListingId(null);
         }
-      }
-      
-      showError("Purchase Failed", errorMessage);
-      setIsAwaitingSignature(false);
-    } finally {
-      setBuyingListingId(null);
-    }
+      },
+    });
   };
 
   const formatAddress = (address: string | undefined | null): string => {
@@ -430,7 +474,6 @@ const Marketplace: React.FC = () => {
             <div className="stat-card">
               <span className="stat-value">{totalListings}</span>
               <span className="stat-label">Active Listings</span>
-              {isLoadingCount && <small style={{ fontSize: '12px', color: '#666' }}> (updating...)</small>}
             </div>
           </div>
         )}
@@ -443,7 +486,7 @@ const Marketplace: React.FC = () => {
               <p>
                 {isAwaitingSignature 
                   ? "Waiting for your signature..." 
-                  : "Loading marketplace listings..."}
+                  : ""}
               </p>
             </div>
           </div>
@@ -482,6 +525,16 @@ const Marketplace: React.FC = () => {
             )}
           </>
         )}
+
+        <ConfirmationModal
+          isOpen={confirmModal.isOpen}
+          title={confirmModal.title}
+          message={confirmModal.message}
+          onConfirm={confirmModal.onConfirm}
+          onCancel={() => setConfirmModal({ ...confirmModal, isOpen: false })}
+          type={confirmModal.type}
+          isLoading={isLoadingPage || isAwaitingSignature}
+        />
       </div>
     </div>
   );

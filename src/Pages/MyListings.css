@@ -9,6 +9,22 @@
   margin: 0 auto;
 }
 
+/* Large Desktop (> 1400px) */
+@media (min-width: 1400px) {
+  .my-listings-container {
+    max-width: 1600px;
+  }
+
+  .nft-grid {
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 40px;
+  }
+
+  .page-header h1 {
+    font-size: 48px;
+  }
+}
+
 .listings-stats {
   display: flex;
   gap: 20px;
@@ -353,24 +369,111 @@
   color: #666;
 }
 
-@media (max-width: 768px) {
+/* Tablet and Laptop (768px - 1024px) */
+@media (min-width: 768px) and (max-width: 1024px) {
+  .my-listings {
+    padding: 32px 24px;
+  }
+
+  .page-header h1 {
+    font-size: 36px;
+  }
+
+  .nft-grid {
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 24px;
+  }
+
+  .listings-stats {
+    flex-wrap: wrap;
+  }
+
+  .stat-card {
+    flex: 1 1 calc(33.333% - 14px);
+    min-width: 180px;
+  }
+}
+
+/* Mobile (up to 767px) */
+@media (max-width: 767px) {
   .my-listings {
     padding: 20px 16px;
   }
 
+  .page-header {
+    margin-bottom: 32px;
+  }
+
+  .page-header h1 {
+    font-size: 28px;
+  }
+
+  .page-header p {
+    font-size: 16px;
+  }
+
   .listings-stats {
     flex-direction: column;
+    gap: 16px;
   }
 
   .stat-card {
     width: 100%;
   }
 
+  .section-title {
+    font-size: 24px;
+  }
+
+  .nft-grid {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  .nft-card-image {
+    height: 240px;
+  }
+
   .nft-card-footer {
     flex-direction: column;
+    gap: 12px;
   }
 
   .nft-card-footer .action-button {
     width: 100%;
+    min-height: 44px; /* Touch-friendly */
+    font-size: 15px;
+  }
+
+  .price-input {
+    min-height: 44px; /* Touch-friendly */
+    font-size: 16px; /* Prevents zoom on iOS */
+  }
+
+  .form-actions {
+    flex-direction: column;
+  }
+
+  .form-actions .action-button {
+    width: 100%;
+  }
+}
+
+/* Small Mobile (up to 480px) */
+@media (max-width: 480px) {
+  .my-listings {
+    padding: 16px 12px;
+  }
+
+  .page-header h1 {
+    font-size: 24px;
+  }
+
+  .nft-grid {
+    gap: 16px;
+  }
+
+  .nft-card-content {
+    padding: 16px;
   }
 }

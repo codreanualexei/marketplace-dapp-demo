@@ -21,6 +21,34 @@ code {
     source-code-pro, Menlo, Monaco, Consolas, "Courier New", monospace;
 }
 
+/* Global responsive improvements */
+@media (max-width: 767px) {
+  .error-display {
+    top: 10px;
+    right: 10px;
+    left: 10px;
+    max-width: none;
+  }
+
+  .error-content {
+    padding: 12px;
+  }
+
+  .error-header h3 {
+    font-size: 14px;
+  }
+
+  .error-message {
+    font-size: 13px;
+  }
+
+  .error-dismiss {
+    padding: 10px 16px;
+    font-size: 14px;
+    min-height: 44px; /* Touch-friendly */
+  }
+}
+
 /* Error Display Styles */
 .error-display {
   position: fixed;
