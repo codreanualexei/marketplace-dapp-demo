@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useWallet } from "../contexts/WalletContext";
 import { useMarketplaceSDK } from "../hooks/useMarketplaceSDK";
 import { useToast } from "../contexts/ToastContext";
@@ -18,14 +18,7 @@ const Mint: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (sdk && account) {
-      checkAdminStatus();
-      setRecipient(account); // Default to own address
-    }
-  }, [sdk, account]);
-
-  const checkAdminStatus = async () => {
+  const checkAdminStatus = useCallback(async () => {
     if (!sdk) return;
 
     setIsLoading(true);
@@ -38,7 +31,14 @@ const Mint: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [sdk]);
+
+  useEffect(() => {
+    if (sdk && account) {
+      checkAdminStatus();
+      setRecipient(account); // Default to own address
+    }
+  }, [sdk, account, checkAdminStatus]);
 
   const handleMint = async (e: React.FormEvent) => {
     e.preventDefault();

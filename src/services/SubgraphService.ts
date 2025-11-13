@@ -53,14 +53,6 @@ interface TokenEntity {
   } | null;
 }
 
-interface RoyaltySplitterEntity {
-  id: string;
-  address: string;
-  creatorEthBalance: string;
-  treasuryEthBalance: string;
-  token: { id: string; tokenId: string } | null;
-}
-
 interface ListingEntity {
   id: string;
   listingId: string;
@@ -70,11 +62,6 @@ interface ListingEntity {
   price: string;
   active: boolean;
   nft: string;
-}
-
-interface AccountEntity {
-  id: string;
-  tokens: Array<{ id: string; tokenId: string }>;
 }
 
 export class SubgraphService {

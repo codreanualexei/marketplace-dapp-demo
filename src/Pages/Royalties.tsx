@@ -133,8 +133,6 @@ const Royalties: React.FC = () => {
   const [ownedDomains, setOwnedDomains] = useState<FormattedToken[]>([]);
   const [isLoadingDomains, setIsLoadingDomains] = useState(false);
   const [isDataReady, setIsDataReady] = useState(false);
-  const [loadedDomainsCount, setLoadedDomainsCount] = useState(0);
-  const [totalDomainsToLoad, setTotalDomainsToLoad] = useState(0);
   const [marketplaceFees, setMarketplaceFees] = useState<string>("0");
   const [isAdmin, setIsAdmin] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -213,8 +211,6 @@ const Royalties: React.FC = () => {
     setIsLoadingDomains(true);
     setError(null);
     setOwnedDomains([]);
-    setLoadedDomainsCount(0);
-    setTotalDomainsToLoad(0);
 
     try {
       console.log("Loading created domains (where user is creator) using subgraph...");
@@ -223,7 +219,6 @@ const Royalties: React.FC = () => {
       // Use subgraph to get created tokens directly (includes splitter data and balances)
       const createdDomains = await sdk.getCreatedTokens(account);
       
-      setTotalDomainsToLoad(createdDomains.length);
       console.log(`Found ${createdDomains.length} domains created by you via subgraph`);
 
       if (createdDomains.length === 0) {
@@ -253,7 +248,6 @@ const Royalties: React.FC = () => {
       });
       
       setOwnedDomains(sortedDomains);
-      setLoadedDomainsCount(sortedDomains.length);
 
       const endTime = Date.now();
       console.log(`Loaded ${sortedDomains.length} created domains in ${endTime - startTime}ms`);

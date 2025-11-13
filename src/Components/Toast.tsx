@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { NETWORK_CONFIG } from '../config/network';
 import './Toast.css';
 
@@ -29,18 +29,18 @@ const Toast: React.FC<ToastProps> = ({
     return () => clearTimeout(timer);
   }, []);
 
+  const handleClose = useCallback(() => {
+    setIsVisible(false);
+    setTimeout(() => onClose(id), 300); // Wait for animation
+  }, [id, onClose]);
+
   useEffect(() => {
     // Auto close after duration
     const timer = setTimeout(() => {
       handleClose();
     }, duration);
     return () => clearTimeout(timer);
-  }, [duration]);
-
-  const handleClose = () => {
-    setIsVisible(false);
-    setTimeout(() => onClose(id), 300); // Wait for animation
-  };
+  }, [duration, handleClose]);
 
   const getExplorerUrl = (hash: string) => {
     // Use the configured block explorer URL from network config

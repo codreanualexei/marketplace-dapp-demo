@@ -135,13 +135,11 @@ const Marketplace: React.FC = () => {
   const { sdk, isLoading: sdkLoading, error: sdkError } = useMarketplaceSDK();
   const [listedDomains, setListedDomains] = useState<ListedToken[]>([]);
   const [totalListings, setTotalListings] = useState(0);
-  const [isLoadingCount, setIsLoadingCount] = useState(false);
   const [isLoadingPage, setIsLoadingPage] = useState(false);
   const [isDataReady, setIsDataReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [buyingListingId, setBuyingListingId] = useState<number | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
-  const [loadedDomainsCount, setLoadedDomainsCount] = useState(0);
   const [isAwaitingSignature, setIsAwaitingSignature] = useState(false);
   const [txStatus, setTxStatus] = useState<'signature' | 'submitting' | 'confirming' | null>(null);
   const [confirmModal, setConfirmModal] = useState<{
@@ -170,7 +168,6 @@ const Marketplace: React.FC = () => {
     if (!sdk || isLoadingCountRef.current) return;
 
     isLoadingCountRef.current = true;
-    setIsLoadingCount(true);
     try {
       console.log("Loading total listing count in background...");
       const startTime = Date.now();
@@ -189,7 +186,6 @@ const Marketplace: React.FC = () => {
       console.error("Error loading count:", err);
       // Don't set error for count - it's optional, keep showing 0
     } finally {
-      setIsLoadingCount(false);
       isLoadingCountRef.current = false;
     }
   }, [sdk]);
@@ -205,7 +201,6 @@ const Marketplace: React.FC = () => {
     setIsLoadingPage(true);
     setError(null);
     setListedDomains([]);
-    setLoadedDomainsCount(0);
 
     try {
       console.log(`Loading page ${currentPage} efficiently (${ITEMS_PER_PAGE} items)...`);
@@ -226,7 +221,6 @@ const Marketplace: React.FC = () => {
       
       // Set all listings at once (no need for progressive loading since subgraph is fast)
       setListedDomains(validListings);
-      setLoadedDomainsCount(validListings.length);
       
       // If this is the first page and we haven't loaded count yet, load it in the background
       if (currentPage === 1 && !hasLoadedCountRef.current) {
@@ -261,9 +255,7 @@ const Marketplace: React.FC = () => {
       setTotalListings(0);
       setCurrentPage(1);
       setError(null);
-      setIsLoadingCount(false);
       setIsLoadingPage(false);
-      setLoadedDomainsCount(0);
       setIsDataReady(false);
       // Reset refs
       isLoadingCountRef.current = false;
@@ -497,7 +489,6 @@ const Marketplace: React.FC = () => {
               setCurrentPage(1);
               setListedDomains([]);
               setError(null);
-              setLoadedDomainsCount(0);
               // Reload current page
               loadCurrentPage();
             }}

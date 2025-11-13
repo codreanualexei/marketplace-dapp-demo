@@ -8,7 +8,6 @@ import React, {
 } from "react";
 import { ethers } from "ethers";
 import { EthereumProvider } from "@walletconnect/ethereum-provider";
-import { NETWORK_CONFIG } from "../config/network";
 
 export type WalletType = "metamask" | "walletconnect";
 
@@ -57,7 +56,7 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
   const [wcProviderInstance, setWcProviderInstance] = useState<any>(null);
 
   // Comprehensive WalletConnect cleanup function
-  const cleanupWalletConnect = async () => {
+  const cleanupWalletConnect = useCallback(async () => {
     try {
       // Disconnect existing provider if it exists
       if (wcProviderInstance) {
@@ -98,9 +97,9 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
       setWcProviderInstance(null);
       setWalletConnectProvider(null);
     }
-  };
+  }, [wcProviderInstance]);
 
-  const updateBalance = async (
+  const updateBalance = useCallback(async (
     address: string,
     provider: ethers.BrowserProvider,
   ) => {
@@ -125,7 +124,7 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
       }
       // Don't set balance to null on error, keep previous value
     }
-  };
+  }, [isNetworkSwitching]);
 
   const connectWallet = async (walletType: WalletType = "metamask") => {
     setIsConnecting(true);
@@ -649,7 +648,7 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
     localStorage.removeItem("preferredWallet");
 
     console.log("Wallet disconnected successfully");
-  }, [walletType]);
+  }, [walletType, cleanupWalletConnect]);
 
   // Listen for account changes
   useEffect(() => {
@@ -768,7 +767,7 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
     return () => {
       cleanupFunctions.forEach((cleanup) => cleanup());
     };
-  }, [account, provider, walletType, walletConnectProvider, disconnectWallet]);
+  }, [account, provider, walletType, walletConnectProvider, disconnectWallet, isNetworkSwitching, updateBalance]);
 
   // Auto-connect if previously connected
   useEffect(() => {
@@ -903,6 +902,7 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
     const timeoutId = setTimeout(checkConnection, 100);
 
     return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // No dependencies to prevent re-runs
 
   const value: WalletContextType = {

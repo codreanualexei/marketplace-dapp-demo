@@ -208,6 +208,39 @@ const MyDomains: React.FC = () => {
   // Show loading screen until all data is loaded (domains + approval status + data ready) OR awaiting signature
   const isFullyLoading = isLoading || isLoadingApprovals || !isDataReady || isAwaitingSignature;
 
+  const checkApprovalStatusForAll = useCallback(async (domains: FormattedToken[]) => {
+    if (!sdk) {
+      setIsLoadingApprovals(false);
+      return;
+    }
+    
+    console.log(`Checking approval status for ${domains.length} domains using batch method...`);
+    const startTime = Date.now();
+    
+    try {
+      // Use optimized batch method (checks isApprovedForAll once, then individual tokens if needed)
+      const tokenIds = domains.map(domain => domain.tokenId);
+      const approvalMap = await sdk.batchCheckTokenApprovals(tokenIds);
+      
+      const endTime = Date.now();
+      console.log(`Batch approval check completed in ${endTime - startTime}ms`);
+      console.log('Final approval status map:', approvalMap);
+      
+      setTokenApprovalStatus(approvalMap);
+    } catch (error) {
+      console.error('Error in batch approval check:', error);
+      // Fallback: set all to false
+      const approvalMap: Record<number, boolean> = {};
+      domains.forEach(domain => {
+        approvalMap[domain.tokenId] = false;
+      });
+      setTokenApprovalStatus(approvalMap);
+    } finally {
+      // Mark approvals as loaded - now we can show the cards
+      setIsLoadingApprovals(false);
+    }
+  }, [sdk]);
+
   const loadMyDomains = useCallback(async () => {
     if (!sdk || !account) {
       console.warn("Cannot load domains: SDK or account not available");
@@ -260,7 +293,7 @@ const MyDomains: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [sdk, account]);
+  }, [sdk, account, checkApprovalStatusForAll]);
 
   // Load domains when component mounts and SDK is available
   useEffect(() => {
@@ -271,39 +304,6 @@ const MyDomains: React.FC = () => {
       setIsDataReady(false);
     }
   }, [sdk, account, loadMyDomains]);
-
-  const checkApprovalStatusForAll = async (domains: FormattedToken[]) => {
-    if (!sdk) {
-      setIsLoadingApprovals(false);
-      return;
-    }
-    
-    console.log(`Checking approval status for ${domains.length} domains using batch method...`);
-    const startTime = Date.now();
-    
-    try {
-      // Use optimized batch method (checks isApprovedForAll once, then individual tokens if needed)
-      const tokenIds = domains.map(domain => domain.tokenId);
-      const approvalMap = await sdk.batchCheckTokenApprovals(tokenIds);
-      
-      const endTime = Date.now();
-      console.log(`Batch approval check completed in ${endTime - startTime}ms`);
-      console.log('Final approval status map:', approvalMap);
-      
-      setTokenApprovalStatus(approvalMap);
-    } catch (error) {
-      console.error('Error in batch approval check:', error);
-      // Fallback: set all to false
-      const approvalMap: Record<number, boolean> = {};
-      domains.forEach(domain => {
-        approvalMap[domain.tokenId] = false;
-      });
-      setTokenApprovalStatus(approvalMap);
-    } finally {
-      // Mark approvals as loaded - now we can show the cards
-      setIsLoadingApprovals(false);
-    }
-  };
 
   const checkApprovalStatus = async (tokenId: number) => {
     if (!sdk) return;
