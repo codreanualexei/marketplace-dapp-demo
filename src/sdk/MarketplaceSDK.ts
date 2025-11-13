@@ -1222,16 +1222,14 @@ export class MarketplaceSDK {
   async getCreatedTokens(creatorAddress: string): Promise<FormattedToken[]> {
     try {
       this.log(`Fetching tokens created by ${creatorAddress} using subgraph...`);
-      
-      // Use subgraph to get created tokens (includes splitter data)
+
       const createdTokens = await this.subgraphService.getCreatedTokens(creatorAddress);
-      
+
       this.log(`Found ${createdTokens.length} tokens created by ${creatorAddress} via subgraph`);
       return createdTokens;
     } catch (error: any) {
       this.error("Error fetching created tokens via subgraph, falling back to contract:", error);
-      
-      // Fallback: get all tokens and filter
+
       const allTokens = await this.getAllStrDomainsFromCollection();
       return allTokens.filter(token => token.creator.toLowerCase() === creatorAddress.toLowerCase());
     }

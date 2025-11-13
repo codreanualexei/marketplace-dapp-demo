@@ -53,6 +53,14 @@ interface TokenEntity {
   } | null;
 }
 
+interface RoyaltySplitterEntity {
+  id: string;
+  address: string;
+  creatorEthBalance: string;
+  treasuryEthBalance: string;
+  token: { id: string; tokenId: string } | null;
+}
+
 interface ListingEntity {
   id: string;
   listingId: string;
@@ -217,6 +225,9 @@ export class SubgraphService {
    */
   async getCreatedTokens(creatorAddress: string, first: number = 1000, skip: number = 0): Promise<FormattedToken[]> {
     try {
+      const normalizedAddress = creatorAddress.toLowerCase();
+      console.log(`[SubgraphService] Fetching created tokens for: ${normalizedAddress}`);
+      
       // Query tokens directly by creator address
       const query = `
         query GetCreatedTokens($creator: ID!, $first: Int!, $skip: Int!) {
@@ -250,16 +261,25 @@ export class SubgraphService {
         }
       `;
 
-      const normalizedAddress = creatorAddress.toLowerCase();
-      console.log(`[SubgraphService] Fetching created tokens for: ${normalizedAddress}`);
-      
       const result = await this.query<{ tokens: TokenEntity[] }>(
         query,
         { creator: normalizedAddress, first, skip }
       );
 
       const tokens = result.tokens.map((entity) => this.mapTokenEntityToFormattedToken(entity));
+
+      const tokensWithNullSplitter = result.tokens.filter(t => !t.royaltySplitter);
+      if (tokensWithNullSplitter.length > 0) {
+        console.warn(
+          `[SubgraphService] Found ${tokensWithNullSplitter.length} created tokens without a royalty splitter relation. Token IDs:`,
+          tokensWithNullSplitter.map(t => t.tokenId),
+        );
+      }
+      
       console.log(`[SubgraphService] Found ${tokens.length} created tokens`);
+      const tokensWithBalances = tokens.filter(t => t.royaltyBalance && parseFloat(t.royaltyBalance) > 0);
+      console.log(`[SubgraphService] Tokens with royalty balances: ${tokensWithBalances.length}`);
+      
       return tokens;
     } catch (error) {
       console.error('[SubgraphService] Error fetching created tokens:', error);
