@@ -330,7 +330,9 @@ export class MarketplaceSDK {
       } else if (error.message?.includes("gas")) {
         throw new Error("Gas estimation failed. Please try again or increase gas limit.");
       } else if (error.message?.includes("network") || error.code === 'NETWORK_ERROR') {
-        throw new Error("Network error. Please check your connection and try again.");
+        //throw new Error("Network error. Please check your connection and try again.");
+        throw new Error(error);
+
       } else if (error.message?.includes("timeout")) {
         throw new Error("Transaction timeout. The transaction may still be processing. Please check your wallet or try again.");
       } else if (error.code === 'UNPREDICTABLE_GAS_LIMIT') {
