@@ -397,10 +397,116 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
         method: "wallet_switchEthereumChain",
         params: [{ chainId: chainIdHex }],
       });
+
+      // CRITICAL: Wait for the network change to propagate
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
+      // CRITICAL: Recreate the provider and signer after network switch
+      // This is essential because ethers.js BrowserProvider caches the network on initialization
+      // If we don't recreate it, the provider will still have the old network cached,
+      // causing "network changed" errors when sending transactions
+      let newProvider: ethers.BrowserProvider | null = null;
+      let newSigner: ethers.JsonRpcSigner | null = null;
+      let network: ethers.Network | null = null;
+      let retries = 0;
+      const maxRetries = 3;
+
+      while (retries < maxRetries) {
+        try {
+          newProvider = new ethers.BrowserProvider(window.ethereum);
+          newSigner = await newProvider.getSigner();
+          network = await newProvider.getNetwork();
+
+          // Verify we're on the correct network
+          if (Number(network.chainId) === targetChainId) {
+            break;
+          }
+          
+          retries++;
+          if (retries < maxRetries) {
+            console.log(`Network not yet switched, retrying... (${retries}/${maxRetries})`);
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+          }
+        } catch (error) {
+          retries++;
+          if (retries < maxRetries) {
+            console.log(`Error getting network info, retrying... (${retries}/${maxRetries})`);
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+          } else {
+            throw error;
+          }
+        }
+      }
+
+      if (!network || Number(network.chainId) !== targetChainId) {
+        throw new Error(`Network switch failed. Expected ${targetChainId}, got ${network?.chainId || 'unknown'}`);
+      }
+
+      if (!newProvider || !newSigner) {
+        throw new Error("Failed to create new provider and signer after network switch");
+      }
+
+      // Update all the state with the new provider/signer
+      setProvider(newProvider);
+      setSigner(newSigner);
+      setChainId(targetChainId);
+
+      console.log("MetaMask network switched successfully to:", targetChainId);
     } catch (switchError: any) {
       // Chain not added to MetaMask, try to add it
       if (switchError.code === 4902) {
         await addMetaMaskNetwork(targetChainId);
+        
+        // After adding network, recreate provider and signer
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+
+        let newProvider: ethers.BrowserProvider | null = null;
+        let newSigner: ethers.JsonRpcSigner | null = null;
+        let network: ethers.Network | null = null;
+        let retries = 0;
+        const maxRetries = 3;
+
+        while (retries < maxRetries) {
+          try {
+            newProvider = new ethers.BrowserProvider(window.ethereum);
+            newSigner = await newProvider.getSigner();
+            network = await newProvider.getNetwork();
+
+            // Verify we're on the correct network
+            if (Number(network.chainId) === targetChainId) {
+              break;
+            }
+            
+            retries++;
+            if (retries < maxRetries) {
+              console.log(`Network not yet switched after add, retrying... (${retries}/${maxRetries})`);
+              await new Promise((resolve) => setTimeout(resolve, 1000));
+            }
+          } catch (error) {
+            retries++;
+            if (retries < maxRetries) {
+              console.log(`Error getting network info after add, retrying... (${retries}/${maxRetries})`);
+              await new Promise((resolve) => setTimeout(resolve, 1000));
+            } else {
+              throw error;
+            }
+          }
+        }
+
+        if (!network || Number(network.chainId) !== targetChainId) {
+          throw new Error(`Network switch failed. Expected ${targetChainId}, got ${network?.chainId || 'unknown'}`);
+        }
+
+        if (!newProvider || !newSigner) {
+          throw new Error("Failed to create new provider and signer after network switch");
+        }
+
+        // Update all the state with the new provider/signer
+        setProvider(newProvider);
+        setSigner(newSigner);
+        setChainId(targetChainId);
+
+        console.log("MetaMask network added and switched successfully to:", targetChainId);
       } else {
         throw switchError;
       }
@@ -669,10 +775,37 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
         }
       };
 
-      const handleChainChanged = (chainIdHex: string) => {
+      const handleChainChanged = async (chainIdHex: string) => {
         console.log("MetaMask chain changed:", chainIdHex);
         const newChainId = parseInt(chainIdHex, 16);
         setChainId(newChainId);
+
+        // CRITICAL: Recreate the provider and signer when chain changes
+        // This is essential because ethers.js BrowserProvider caches the network on initialization
+        // If we don't recreate it, the provider will still have the old network cached,
+        // causing "network changed" errors when sending transactions
+        if (typeof window.ethereum !== "undefined") {
+          try {
+            // Wait a moment for the network change to propagate
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            const newProvider = new ethers.BrowserProvider(window.ethereum);
+            const newSigner = await newProvider.getSigner();
+            const network = await newProvider.getNetwork();
+
+            // Verify we're on the correct network
+            if (Number(network.chainId) === newChainId) {
+              setProvider(newProvider);
+              setSigner(newSigner);
+              console.log("MetaMask provider recreated for new network:", newChainId);
+            } else {
+              console.warn(`Network mismatch: expected ${newChainId}, got ${network.chainId}`);
+            }
+          } catch (error) {
+            console.error("Error recreating MetaMask provider after chain change:", error);
+            // Don't throw - let the network switch process handle it
+          }
+        }
 
         // Don't update balance immediately - let the network switch process handle it
         console.log("MetaMask network changed to:", newChainId);
