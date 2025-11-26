@@ -11,6 +11,7 @@ import ConfirmationModal from "../Components/ConfirmationModal";
 import {
   applyPurchasedUpdate,
   calculateNewListingCountAfterPurchase,
+  areListingsDifferent,
 } from "../utils/optimisticUpdates";
 import {
   storePendingUpdate,
@@ -214,8 +215,14 @@ const Marketplace: React.FC = () => {
         listing && listing.active && listing.seller && listing.strCollectionAddress && listing.tokenData
       );
       
-      // Set all listings at once (no need for progressive loading since subgraph is fast)
-      setListedDomains(validListings);
+      // Only update state if data actually changed (prevents unnecessary re-renders)
+      setListedDomains(prevListings => {
+        if (areListingsDifferent(prevListings, validListings)) {
+          return validListings;
+        }
+        // Data is the same, return previous state to prevent re-render
+        return prevListings;
+      });
       
       // If this is the first page and we haven't loaded count yet, load it in the background
       if (currentPage === 1 && !hasLoadedCountRef.current) {

@@ -13,6 +13,7 @@ import {
   removePendingUpdate,
   isTransactionConfirmed,
 } from "../utils/persistentOptimisticUpdates";
+import { areDomainsDifferent } from "../utils/optimisticUpdates";
 import "./Royalties.css";
 
 // Helper function to get domain name from tokenURI
@@ -183,10 +184,22 @@ const Royalties: React.FC = () => {
       try {
         const fees = await sdk.getMarketplaceFees();
         if (fees) {
-          setMarketplaceFees(ethers.formatEther(fees));
+          const feesStr = ethers.formatEther(fees);
+          // Only update if fees actually changed
+          setMarketplaceFees(prevFees => {
+            if (prevFees !== feesStr) {
+              return feesStr;
+            }
+            return prevFees; // No change, prevent re-render
+          });
         }
       } catch (feeError) {
-        setMarketplaceFees("0");
+        setMarketplaceFees(prevFees => {
+          if (prevFees !== "0") {
+            return "0";
+          }
+          return prevFees; // No change, prevent re-render
+        });
       }
 
     } catch (err: any) {
@@ -248,7 +261,14 @@ const Royalties: React.FC = () => {
         return 0; // Keep original order for domains without royalties
       });
       
-      setOwnedDomains(sortedDomains);
+      // Only update state if data actually changed (prevents unnecessary re-renders)
+      setOwnedDomains(prevDomains => {
+        if (areDomainsDifferent(prevDomains, sortedDomains)) {
+          return sortedDomains;
+        }
+        // Data is the same, return previous state to prevent re-render
+        return prevDomains;
+      });
 
       
       // Add a small delay to ensure all state updates are complete before showing cards
@@ -432,10 +452,50 @@ const Royalties: React.FC = () => {
             
             // Background sync: Verify with subgraph after delay (non-blocking)
             setTimeout(async () => {
+              if (!account) {
+                console.warn("⚠️ [PERSISTENT UPDATE] Cannot sync - account not available");
+                return;
+              }
+              
               console.log("🔄 Background Sync: Verifying royalty withdrawal with subgraph...");
               console.log(`🔄 [PERSISTENT UPDATE] Starting background sync for ${txHash}...`);
               (sdk as any).clearCaches();
-              await loadOwnedDomains();
+              
+              // Load data and only update if changed
+              const createdDomains = await sdk.getCreatedTokens(account);
+              const balances = await sdk.getSplitterBalanceOfWallet(account);
+              
+              // Merge domains with balances
+              const domainsWithBalances = createdDomains.map((domain: FormattedToken) => {
+                const balance = balances.find((b: { splitter: string; balance: string }) => b.splitter === domain.splitterAddress);
+                return {
+                  ...domain,
+                  royaltyBalance: balance ? balance.balance : '0',
+                };
+              });
+              
+              const sortedDomains = domainsWithBalances.sort((a: FormattedToken, b: FormattedToken) => {
+                const aHasRoyalty = a.royaltyBalance && parseFloat(a.royaltyBalance) > 0;
+                const bHasRoyalty = b.royaltyBalance && parseFloat(b.royaltyBalance) > 0;
+                if (aHasRoyalty && !bHasRoyalty) return -1;
+                if (!aHasRoyalty && bHasRoyalty) return 1;
+                if (aHasRoyalty && bHasRoyalty) {
+                  const aAmount = parseFloat(a.royaltyBalance!);
+                  const bAmount = parseFloat(b.royaltyBalance!);
+                  return bAmount - aAmount;
+                }
+                return 0;
+              });
+              
+              setOwnedDomains(prevDomains => {
+                if (areDomainsDifferent(prevDomains, sortedDomains)) {
+                  console.log(`📊 [BACKGROUND SYNC] Domains changed (${prevDomains.length} → ${sortedDomains.length})`);
+                  return sortedDomains;
+                }
+                console.log(`✅ [BACKGROUND SYNC] Domains unchanged: ${sortedDomains.length} items (skipping state update)`);
+                return prevDomains;
+              });
+              
               console.log(`🗑️ [PERSISTENT UPDATE] Background sync completed, removing pending update for ${txHash}`);
               removePendingUpdate(txHash);
             }, 30000); // Wait 30 seconds for subgraph to index
@@ -524,7 +584,19 @@ const Royalties: React.FC = () => {
               console.log("🔄 Background Sync: Verifying marketplace fees withdrawal with subgraph...");
               console.log(`🔄 [PERSISTENT UPDATE] Starting background sync for ${txHash}...`);
               (sdk as any).clearCaches();
-              await loadBalances();
+              
+              // Load fees and only update if changed
+              const fees = await sdk.getMarketplaceFees();
+              const feesStr = fees ? ethers.formatEther(fees) : "0";
+              setMarketplaceFees(prevFees => {
+                if (prevFees !== feesStr) {
+                  console.log(`📊 [BACKGROUND SYNC] Marketplace fees changed: ${prevFees} → ${feesStr}`);
+                  return feesStr;
+                }
+                console.log(`✅ [BACKGROUND SYNC] Marketplace fees unchanged: ${feesStr} (skipping state update)`);
+                return prevFees;
+              });
+              
               console.log(`🗑️ [PERSISTENT UPDATE] Background sync completed, removing pending update for ${txHash}`);
               removePendingUpdate(txHash);
             }, 30000); // Wait 30 seconds for subgraph to index

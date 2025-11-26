@@ -223,6 +223,101 @@ export function calculateNewListingCountAfterCancel(
 }
 
 /**
+ * Compare two listings arrays to check if they're different
+ * Returns true if arrays are different, false if they're the same
+ */
+export function areListingsDifferent(
+  oldListings: ListedToken[],
+  newListings: ListedToken[]
+): boolean {
+  // Quick check: different lengths means different
+  if (oldListings.length !== newListings.length) {
+    return true;
+  }
+  
+  // If both empty, they're the same
+  if (oldListings.length === 0) {
+    return false;
+  }
+  
+  // Create maps for quick lookup
+  const oldMap = new Map(oldListings.map(l => [l.listingId, l]));
+  const newMap = new Map(newListings.map(l => [l.listingId, l]));
+  
+  // Check if all listingIds match
+  for (const listingId of oldMap.keys()) {
+    if (!newMap.has(listingId)) {
+      return true; // Listing removed
+    }
+  }
+  
+  for (const listingId of newMap.keys()) {
+    if (!oldMap.has(listingId)) {
+      return true; // New listing added
+    }
+    
+    // Check if price changed (for updates)
+    const oldListing = oldMap.get(listingId)!;
+    const newListing = newMap.get(listingId)!;
+    if (oldListing.price !== newListing.price) {
+      return true; // Price changed
+    }
+    
+    // Check if active status changed
+    if (oldListing.active !== newListing.active) {
+      return true; // Status changed
+    }
+  }
+  
+  return false; // Arrays are the same
+}
+
+/**
+ * Compare two domains arrays to check if they're different
+ * Returns true if arrays are different, false if they're the same
+ */
+export function areDomainsDifferent(
+  oldDomains: FormattedToken[],
+  newDomains: FormattedToken[]
+): boolean {
+  // Quick check: different lengths means different
+  if (oldDomains.length !== newDomains.length) {
+    return true;
+  }
+  
+  // If both empty, they're the same
+  if (oldDomains.length === 0) {
+    return false;
+  }
+  
+  // Create maps for quick lookup
+  const oldMap = new Map(oldDomains.map(d => [d.tokenId, d]));
+  const newMap = new Map(newDomains.map(d => [d.tokenId, d]));
+  
+  // Check if all tokenIds match
+  for (const tokenId of oldMap.keys()) {
+    if (!newMap.has(tokenId)) {
+      return true; // Domain removed
+    }
+  }
+  
+  for (const tokenId of newMap.keys()) {
+    if (!oldMap.has(tokenId)) {
+      return true; // New domain added
+    }
+    
+    // Check if royalty balance changed
+    const oldDomain = oldMap.get(tokenId)!;
+    const newDomain = newMap.get(tokenId)!;
+    if (oldDomain.royaltyBalance !== newDomain.royaltyBalance) {
+      return true; // Royalty balance changed
+    }
+  }
+  
+  return false; // Arrays are the same
+}
+
+/**
  * Apply optimistic update for approval
  * Updates approval status for a token
  */

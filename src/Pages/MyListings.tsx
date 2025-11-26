@@ -11,6 +11,7 @@ import ConfirmationModal from "../Components/ConfirmationModal";
 import {
   applyListingUpdatedUpdate,
   applyListingCanceledUpdate,
+  areListingsDifferent,
 } from "../utils/optimisticUpdates";
 import {
   storePendingUpdate,
@@ -264,7 +265,14 @@ const MyListings: React.FC = () => {
       const listings =
         await sdk.getMyAllListedDomainsOnMarketplaceWithTokenData();
 
-      setMyListings(listings);
+      // Only update state if data actually changed (prevents unnecessary re-renders)
+      setMyListings(prevListings => {
+        if (areListingsDifferent(prevListings, listings)) {
+          return listings;
+        }
+        // Data is the same, return previous state to prevent re-render
+        return prevListings;
+      });
       
       // Add a small delay to ensure all state updates are complete before showing cards
       // This prevents flickering and weird loading states
@@ -465,7 +473,18 @@ const MyListings: React.FC = () => {
               console.log("🔄 Background Sync: Verifying listing update with subgraph...");
               console.log(`🔄 [PERSISTENT UPDATE] Starting background sync for ${txHash}...`);
               (sdk as any).clearCaches();
-              await loadMyListings();
+              
+              // Load data and only update if changed
+              const listings = await sdk.getMyAllListedDomainsOnMarketplaceWithTokenData();
+              setMyListings(prevListings => {
+                if (areListingsDifferent(prevListings, listings)) {
+                  console.log(`📊 [BACKGROUND SYNC] Listings changed (${prevListings.length} → ${listings.length})`);
+                  return listings;
+                }
+                console.log(`✅ [BACKGROUND SYNC] Listings unchanged: ${listings.length} items (skipping state update)`);
+                return prevListings;
+              });
+              
               console.log(`🗑️ [PERSISTENT UPDATE] Background sync completed, removing pending update for ${txHash}`);
               removePendingUpdate(txHash);
             }, 30000); // Wait 30 seconds for subgraph to index
@@ -564,7 +583,18 @@ const MyListings: React.FC = () => {
               console.log("🔄 Background Sync: Verifying listing cancellation with subgraph...");
               console.log(`🔄 [PERSISTENT UPDATE] Starting background sync for ${txHash}...`);
               (sdk as any).clearCaches();
-              await loadMyListings();
+              
+              // Load data and only update if changed
+              const listings = await sdk.getMyAllListedDomainsOnMarketplaceWithTokenData();
+              setMyListings(prevListings => {
+                if (areListingsDifferent(prevListings, listings)) {
+                  console.log(`📊 [BACKGROUND SYNC] Listings changed (${prevListings.length} → ${listings.length})`);
+                  return listings;
+                }
+                console.log(`✅ [BACKGROUND SYNC] Listings unchanged: ${listings.length} items (skipping state update)`);
+                return prevListings;
+              });
+              
               console.log(`🗑️ [PERSISTENT UPDATE] Background sync completed, removing pending update for ${txHash}`);
               removePendingUpdate(txHash);
             }, 30000); // Wait 30 seconds for subgraph to index

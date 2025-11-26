@@ -11,6 +11,7 @@ import ConfirmationModal from "../Components/ConfirmationModal";
 import {
   applyApprovalUpdate,
   applyListingUpdate,
+  areDomainsDifferent,
 } from "../utils/optimisticUpdates";
 import {
   storePendingUpdate,
@@ -269,7 +270,13 @@ const MyDomains: React.FC = () => {
       }
       
       // Set domains first (but don't show them yet - wait for approvals)
-      setMyDomains(domains);
+      // Only update if data changed
+      setMyDomains(prevDomains => {
+        if (areDomainsDifferent(prevDomains, domains)) {
+          return domains;
+        }
+        return prevDomains; // No change, prevent re-render
+      });
       
       // Check approval status for all domains (this must complete before showing cards)
       await checkApprovalStatusForAll(domains);
@@ -479,7 +486,20 @@ const MyDomains: React.FC = () => {
             setTimeout(async () => {
               console.log("🔄 Background Sync: Verifying approval status...");
               console.log(`🔄 [PERSISTENT UPDATE] Starting background sync for ${txHash}...`);
-              await checkApprovalStatus(tokenId);
+              
+              // Check approval and only update if changed
+              if (sdk) {
+                const isApproved = await sdk.isTokenApprovedForMarketplace(tokenId);
+                setTokenApprovalStatus(prevApprovals => {
+                  if (prevApprovals[tokenId] !== isApproved) {
+                    console.log(`📊 [BACKGROUND SYNC] Approval status changed for token ${tokenId}: ${prevApprovals[tokenId]} → ${isApproved}`);
+                    return { ...prevApprovals, [tokenId]: isApproved };
+                  }
+                  console.log(`✅ [BACKGROUND SYNC] Approval status unchanged for token ${tokenId}: ${isApproved} (skipping state update)`);
+                  return prevApprovals;
+                });
+              }
+              
               console.log(`🗑️ [PERSISTENT UPDATE] Background sync completed, removing pending update for ${txHash}`);
               removePendingUpdate(txHash);
             }, 30000); // Wait 30 seconds for subgraph to index
@@ -583,7 +603,39 @@ const MyDomains: React.FC = () => {
               console.log("🔄 Background Sync: Verifying listing with subgraph...");
               console.log(`🔄 [PERSISTENT UPDATE] Starting background sync for ${txHash}...`);
               (sdk as any).clearCaches();
-              await loadMyDomains();
+              
+              // Load data and only update if changed
+              const domains = await sdk.getMyDomainsFromCollection();
+              setMyDomains(prevDomains => {
+                if (areDomainsDifferent(prevDomains, domains)) {
+                  console.log(`📊 [BACKGROUND SYNC] Domains changed (${prevDomains.length} → ${domains.length})`);
+                  return domains;
+                }
+                console.log(`✅ [BACKGROUND SYNC] Domains unchanged: ${domains.length} items (skipping state update)`);
+                return prevDomains;
+              });
+              
+              // Re-check approvals if domains changed
+              if (domains.length > 0) {
+                const tokenIds = domains.map(domain => domain.tokenId);
+                const approvalMap = await sdk.batchCheckTokenApprovals(tokenIds);
+                setTokenApprovalStatus(prevApprovals => {
+                  // Only update if approvals actually changed
+                  const hasChanged = Object.keys(approvalMap).some(
+                    tokenId => prevApprovals[Number(tokenId)] !== approvalMap[Number(tokenId)]
+                  ) || Object.keys(prevApprovals).some(
+                    tokenId => approvalMap[Number(tokenId)] === undefined
+                  );
+                  
+                  if (hasChanged) {
+                    console.log(`📊 [BACKGROUND SYNC] Approval status changed`);
+                    return approvalMap;
+                  }
+                  console.log(`✅ [BACKGROUND SYNC] Approval status unchanged (skipping state update)`);
+                  return prevApprovals;
+                });
+              }
+              
               console.log(`🗑️ [PERSISTENT UPDATE] Background sync completed, removing pending update for ${txHash}`);
               removePendingUpdate(txHash);
             }, 30000); // Wait 30 seconds for subgraph to index
