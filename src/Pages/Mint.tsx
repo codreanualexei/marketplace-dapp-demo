@@ -2,6 +2,11 @@ import React, { useState, useEffect, useCallback } from "react";
 import { useWallet } from "../contexts/WalletContext";
 import { useMarketplaceSDK } from "../hooks/useMarketplaceSDK";
 import { useToast } from "../contexts/ToastContext";
+import { applyMintedUpdate } from "../utils/optimisticUpdates";
+import {
+  storePendingUpdate,
+  removePendingUpdate,
+} from "../utils/persistentOptimisticUpdates";
 import "./Mint.css";
 
 const Mint: React.FC = () => {
@@ -53,9 +58,33 @@ const Mint: React.FC = () => {
     setSuccess(null);
 
     try {
-      const txHash = await sdk.mintDomain(recipient, tokenURI, domainName);
+      // Use new method that returns receipt and parsed events
+      const { txHash, mintedEvent, transfers } = await (sdk as any).mintDomainWithReceipt(recipient, tokenURI, domainName);
 
-      if (txHash) {
+      if (txHash && mintedEvent) {
+        // OPTIMISTIC UPDATE: If minted to current user, we could update their domain list
+        // But since this is an admin page, we don't need to update UI here
+        // The minted NFT will appear in MyDomains page after subgraph sync
+        console.log("✅ Optimistic Update: Domain minted!", { txHash, tokenId: mintedEvent.tokenId, to: mintedEvent.to });
+        
+        // Store pending update (for MyDomains page to pick up)
+        console.log('💾 [PERSISTENT UPDATE] Storing mint update for persistence...');
+        storePendingUpdate({
+          type: 'mint',
+          txHash,
+          data: {
+            tokenId: mintedEvent.tokenId,
+            to: mintedEvent.to,
+          },
+        });
+        
+        // Clean up after a delay (mint updates are handled in MyDomains)
+        setTimeout(() => {
+          console.log(`🗑️ [PERSISTENT UPDATE] Removing mint update after delay: ${txHash}`);
+          removePendingUpdate(txHash);
+        }, 60000); // 60 seconds - give more time for subgraph
+        
+        // Show success message immediately
         showSuccess(
           "NFT Minted Successfully! 🎉",
           `New domain NFT has been minted to ${recipient}`,
@@ -65,6 +94,17 @@ const Mint: React.FC = () => {
         setTokenURI("");
         setDomainName("");
         // Keep recipient filled
+      } else if (txHash) {
+        // Transaction succeeded but couldn't parse event - fallback
+        console.warn("Mint succeeded but couldn't parse event");
+        showSuccess(
+          "NFT Minted Successfully! 🎉",
+          `New domain NFT has been minted to ${recipient}`,
+          txHash
+        );
+        // Clear form
+        setTokenURI("");
+        setDomainName("");
       } else {
         showError("Mint Failed", "Failed to mint NFT. Make sure you have MINTER_ROLE.");
       }

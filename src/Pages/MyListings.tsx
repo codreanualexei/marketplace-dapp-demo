@@ -8,6 +8,17 @@ import Pagination from "../Components/Pagination";
 import { useNFTMetadata, getTokenURI } from "../hooks/useNFTMetadata";
 import { NFTMetadataDisplay } from "../Components/NFTMetadata";
 import ConfirmationModal from "../Components/ConfirmationModal";
+import {
+  applyListingUpdatedUpdate,
+  applyListingCanceledUpdate,
+} from "../utils/optimisticUpdates";
+import {
+  storePendingUpdate,
+  getPendingUpdates,
+  removePendingUpdate,
+  isTransactionConfirmed,
+} from "../utils/persistentOptimisticUpdates";
+import { parseAllEvents } from "../utils/eventParser";
 import "./MyListings.css";
 
 // Helper function to get domain name from tokenURI
@@ -250,14 +261,8 @@ const MyListings: React.FC = () => {
     setError(null);
 
     try {
-      console.log("Loading my listings using subgraph...");
-      const startTime = Date.now();
-
       const listings =
         await sdk.getMyAllListedDomainsOnMarketplaceWithTokenData();
-      
-      const endTime = Date.now();
-      console.log(`Loaded ${listings.length} listings in ${endTime - startTime}ms`);
 
       setMyListings(listings);
       
@@ -273,6 +278,98 @@ const MyListings: React.FC = () => {
       setIsLoading(false);
     }
   }, [sdk]);
+
+  // Check and re-apply pending optimistic updates on mount
+  useEffect(() => {
+    const applyPendingUpdates = async () => {
+      if (!sdk || !account) {
+        console.log('⏸️ [PERSISTENT UPDATE] Skipping check - SDK or account not available');
+        return;
+      }
+      
+      console.log('🔄 [PERSISTENT UPDATE] Checking for pending listing updates on page load...');
+      const allPending = getPendingUpdates();
+      const pending = allPending.filter(
+        u => u.type === 'update' || u.type === 'cancel'
+      );
+      
+      if (pending.length === 0) {
+        console.log('✅ [PERSISTENT UPDATE] No pending listing updates found');
+        return;
+      }
+      
+      console.log(`🔄 [PERSISTENT UPDATE] Found ${pending.length} pending listing update(s), verifying...`);
+      
+      for (const update of pending) {
+        try {
+          console.log(`🔍 [PERSISTENT UPDATE] Processing update:`, {
+            type: update.type,
+            txHash: update.txHash,
+            listingId: update.data.listingId,
+            age: `${Math.round((Date.now() - update.timestamp) / 1000)}s old`
+          });
+          
+          const provider = (sdk as any).signer?.provider || (sdk as any).provider;
+          const isConfirmed = await isTransactionConfirmed(update.txHash, provider);
+          
+          if (isConfirmed) {
+            console.log(`📥 [PERSISTENT UPDATE] Fetching receipt for ${update.txHash}...`);
+            const receipt = await provider?.getTransactionReceipt(update.txHash);
+            if (receipt) {
+              console.log(`📄 [PERSISTENT UPDATE] Parsing events from receipt...`);
+              const events = parseAllEvents(
+                receipt,
+                (sdk as any).marketplaceAddress,
+                (sdk as any).nftAddress
+              );
+              
+              if (update.type === 'update' && events.listingUpdated) {
+                console.log("✅ [PERSISTENT UPDATE] Re-applying pending listing update:", {
+                  txHash: update.txHash,
+                  listingId: events.listingUpdated.listingId,
+                  newPrice: events.listingUpdated.newPrice,
+                  action: 'Updating listing price'
+                });
+                setMyListings(prevListings => 
+                  applyListingUpdatedUpdate(prevListings, events.listingUpdated!)
+                );
+                console.log("✅ [PERSISTENT UPDATE] Listing update re-applied successfully");
+                removePendingUpdate(update.txHash);
+              } else if (update.type === 'cancel' && events.listingCanceled) {
+                console.log("✅ [PERSISTENT UPDATE] Re-applying pending listing cancellation:", {
+                  txHash: update.txHash,
+                  listingId: events.listingCanceled.listingId,
+                  action: 'Removing listing'
+                });
+                setMyListings(prevListings => 
+                  applyListingCanceledUpdate(prevListings, events.listingCanceled!)
+                );
+                console.log("✅ [PERSISTENT UPDATE] Listing cancellation re-applied successfully");
+                removePendingUpdate(update.txHash);
+              } else {
+                console.warn(`⚠️ [PERSISTENT UPDATE] Expected event not found for ${update.type}, keeping in pending`);
+              }
+            } else {
+              console.warn(`⚠️ [PERSISTENT UPDATE] Could not fetch receipt for ${update.txHash}, keeping in pending`);
+            }
+          } else {
+            console.warn("⚠️ [PERSISTENT UPDATE] Transaction not confirmed, removing from pending:", {
+              txHash: update.txHash,
+              type: update.type,
+              reason: 'Transaction not confirmed or failed'
+            });
+            removePendingUpdate(update.txHash);
+          }
+        } catch (error) {
+          console.error(`❌ [PERSISTENT UPDATE] Error applying pending update ${update.txHash}:`, error);
+        }
+      }
+      
+      console.log('✅ [PERSISTENT UPDATE] Finished processing all pending listing updates');
+    };
+    
+    applyPendingUpdates();
+  }, [sdk, account]);
 
   useEffect(() => {
     if (sdk && account) {
@@ -325,7 +422,8 @@ const MyListings: React.FC = () => {
             setTxStatus('confirming');
           }, 3000);
           
-          const txHash = await sdk.updateListing(listingId, newPrice);
+          // Use new method that returns receipt and parsed events
+          const { txHash, listingUpdatedEvent } = await (sdk as any).updateListingWithReceipt(listingId, newPrice);
           
           clearTimeout(submittingTimeout);
           clearTimeout(confirmingTimeout);
@@ -333,7 +431,47 @@ const MyListings: React.FC = () => {
           setIsAwaitingSignature(false);
           setTxStatus(null);
 
-          if (txHash) {
+          if (txHash && listingUpdatedEvent) {
+            // OPTIMISTIC UPDATE: Immediately update UI with parsed event data
+            console.log("✅ Optimistic Update: Listing price updated!", { txHash, listingId: listingUpdatedEvent.listingId, newPrice: listingUpdatedEvent.newPrice });
+            
+            // Store pending update for persistence across page refreshes
+            console.log('💾 [PERSISTENT UPDATE] Storing listing update for persistence...');
+            storePendingUpdate({
+              type: 'update',
+              txHash,
+              data: {
+                listingId: listingUpdatedEvent.listingId,
+                newPrice: listingUpdatedEvent.newPrice,
+              },
+            });
+            
+            // Update listing price in current view
+            setMyListings(prevListings => 
+              applyListingUpdatedUpdate(prevListings, listingUpdatedEvent)
+            );
+            
+            // Show success message immediately
+            showSuccess(
+              "Price Updated Successfully! ✅",
+              `${domainName} listing price updated to ${newPrice} ${NETWORK_CONFIG.nativeCurrency.symbol}`,
+              txHash
+            );
+            setUpdatingListingId(null);
+            setNewPrice("");
+            
+            // Background sync: Verify with subgraph after delay (non-blocking)
+            setTimeout(async () => {
+              console.log("🔄 Background Sync: Verifying listing update with subgraph...");
+              console.log(`🔄 [PERSISTENT UPDATE] Starting background sync for ${txHash}...`);
+              (sdk as any).clearCaches();
+              await loadMyListings();
+              console.log(`🗑️ [PERSISTENT UPDATE] Background sync completed, removing pending update for ${txHash}`);
+              removePendingUpdate(txHash);
+            }, 30000); // Wait 30 seconds for subgraph to index
+          } else if (txHash) {
+            // Transaction succeeded but couldn't parse event - fallback to old behavior
+            console.warn("Update succeeded but couldn't parse event, using fallback refresh");
             showSuccess(
               "Price Updated Successfully! ✅",
               `${domainName} listing price updated to ${newPrice} ${NETWORK_CONFIG.nativeCurrency.symbol}`,
@@ -386,7 +524,8 @@ const MyListings: React.FC = () => {
             setTxStatus('confirming');
           }, 3000);
           
-          const txHash = await sdk.cancelListing(listingId);
+          // Use new method that returns receipt and parsed events
+          const { txHash, listingCanceledEvent } = await (sdk as any).cancelListingWithReceipt(listingId);
           
           clearTimeout(submittingTimeout);
           clearTimeout(confirmingTimeout);
@@ -394,7 +533,44 @@ const MyListings: React.FC = () => {
           setIsAwaitingSignature(false);
           setTxStatus(null);
 
-          if (txHash) {
+          if (txHash && listingCanceledEvent) {
+            // OPTIMISTIC UPDATE: Immediately update UI with parsed event data
+            console.log("✅ Optimistic Update: Listing canceled!", { txHash, listingId: listingCanceledEvent.listingId });
+            
+            // Store pending update for persistence across page refreshes
+            console.log('💾 [PERSISTENT UPDATE] Storing listing cancellation for persistence...');
+            storePendingUpdate({
+              type: 'cancel',
+              txHash,
+              data: {
+                listingId: listingCanceledEvent.listingId,
+              },
+            });
+            
+            // Remove canceled listing from current view
+            setMyListings(prevListings => 
+              applyListingCanceledUpdate(prevListings, listingCanceledEvent)
+            );
+            
+            // Show success message immediately
+            showSuccess(
+              "Listing Cancelled Successfully! ✅",
+              `${domainName} listing has been removed from the marketplace`,
+              txHash
+            );
+            
+            // Background sync: Verify with subgraph after delay (non-blocking)
+            setTimeout(async () => {
+              console.log("🔄 Background Sync: Verifying listing cancellation with subgraph...");
+              console.log(`🔄 [PERSISTENT UPDATE] Starting background sync for ${txHash}...`);
+              (sdk as any).clearCaches();
+              await loadMyListings();
+              console.log(`🗑️ [PERSISTENT UPDATE] Background sync completed, removing pending update for ${txHash}`);
+              removePendingUpdate(txHash);
+            }, 30000); // Wait 30 seconds for subgraph to index
+          } else if (txHash) {
+            // Transaction succeeded but couldn't parse event - fallback to old behavior
+            console.warn("Cancel succeeded but couldn't parse event, using fallback refresh");
             showSuccess(
               "Listing Cancelled Successfully! ✅",
               `${domainName} listing has been removed from the marketplace`,

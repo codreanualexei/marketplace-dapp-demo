@@ -222,3 +222,28 @@ export function calculateNewListingCountAfterCancel(
   return Math.max(0, currentCount - 1);
 }
 
+/**
+ * Apply optimistic update for approval
+ * Updates approval status for a token
+ */
+export function applyApprovalUpdate(
+  approvalStatus: Record<number, boolean>,
+  tokenId: number
+): Record<number, boolean> {
+  return {
+    ...approvalStatus,
+    [tokenId]: true,
+  };
+}
+
+/**
+ * Apply optimistic update for listing
+ * Removes the listed domain from owned domains (it's now owned by marketplace)
+ */
+export function applyListingUpdate(
+  ownedDomains: FormattedToken[],
+  tokenId: number
+): FormattedToken[] {
+  return ownedDomains.filter(domain => domain.tokenId !== tokenId);
+}
+

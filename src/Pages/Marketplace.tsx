@@ -12,6 +12,13 @@ import {
   applyPurchasedUpdate,
   calculateNewListingCountAfterPurchase,
 } from "../utils/optimisticUpdates";
+import {
+  storePendingUpdate,
+  getPendingUpdates,
+  removePendingUpdate,
+  isTransactionConfirmed,
+} from "../utils/persistentOptimisticUpdates";
+import { parseAllEvents } from "../utils/eventParser";
 import "./Marketplace.css";
 
 // Helper function to get domain name from tokenURI
@@ -173,15 +180,8 @@ const Marketplace: React.FC = () => {
 
     isLoadingCountRef.current = true;
     try {
-      console.log("Loading total listing count in background...");
-      const startTime = Date.now();
-      
       // Get just the count without loading all listings
       const count = await (sdk as any).getActiveListingCountOptimized();
-      
-      const endTime = Date.now();
-      console.log(`Loaded listing count in ${endTime - startTime}ms:`, count);
-      console.log(`Total active listings in marketplace: ${count}`);
 
       // Update the count - this will cause the UI to update from 0 to the real number
       setTotalListings(count);
@@ -195,9 +195,7 @@ const Marketplace: React.FC = () => {
   }, [sdk]);
 
   const loadCurrentPage = useCallback(async () => {
-    console.log(`loadCurrentPage called - sdk: ${!!sdk}, isLoadingPage: ${isLoadingPageRef.current}, currentPage: ${currentPage}`);
     if (!sdk || isLoadingPageRef.current) {
-      console.log("loadCurrentPage early return - sdk or loading check failed");
       return;
     }
 
@@ -207,21 +205,14 @@ const Marketplace: React.FC = () => {
     setListedDomains([]);
 
     try {
-      console.log(`Loading page ${currentPage} efficiently (${ITEMS_PER_PAGE} items)...`);
-      const startTime = Date.now();
-      
       // Use the SDK's optimized page method to get only what we need (single subgraph query)
       const pageListings = await (sdk as any).getActiveListingsPageOptimized(currentPage, ITEMS_PER_PAGE);
-      
-      console.log(`SDK returned ${pageListings.length} listings for page ${currentPage}:`, pageListings.map((l: ListedToken) => l.listingId));
 
       // The subgraph already returns tokenData with listings, so we can use them directly
       // Filter out invalid listings and use the data as-is
       const validListings = pageListings.filter((listing: ListedToken) => 
         listing && listing.active && listing.seller && listing.strCollectionAddress && listing.tokenData
       );
-      
-      console.log(`Found ${validListings.length} valid listings out of ${pageListings.length} total`);
       
       // Set all listings at once (no need for progressive loading since subgraph is fast)
       setListedDomains(validListings);
@@ -231,10 +222,6 @@ const Marketplace: React.FC = () => {
         // Load count in background (non-blocking)
         loadTotalCount();
       }
-      
-      const endTime = Date.now();
-      console.log(`Loaded page ${currentPage} in ${endTime - startTime}ms:`, validListings);
-      console.log(`Found ${validListings.length} active listings on page ${currentPage}`);
       
       // Add a small delay to ensure all state updates are complete before showing cards
       // This prevents flickering and weird loading states
@@ -254,7 +241,6 @@ const Marketplace: React.FC = () => {
   // Reset marketplace data when SDK changes (but not when wallet changes)
   useEffect(() => {
     if (!sdk) {
-      console.log("Marketplace: Clearing data due to SDK change");
       setListedDomains([]);
       setTotalListings(0);
       setCurrentPage(1);
@@ -269,11 +255,79 @@ const Marketplace: React.FC = () => {
     }
   }, [sdk]);
 
+  // Check and re-apply pending optimistic updates on mount
+  useEffect(() => {
+    const applyPendingUpdates = async () => {
+      if (!sdk || !account) return;
+      
+      const pending = getPendingUpdates().filter(u => u.type === 'purchase');
+      if (pending.length === 0) return;
+      
+      console.log(`🔄 Found ${pending.length} pending purchase update(s), verifying...`);
+      
+      for (const update of pending) {
+        try {
+          // Check if transaction is confirmed
+      const provider = (sdk as any).signer?.provider || (sdk as any).provider;
+      const isConfirmed = await isTransactionConfirmed(
+        update.txHash,
+        provider
+      );
+          
+          if (isConfirmed) {
+            // Get receipt and parse events
+            const receipt = await provider?.getTransactionReceipt(update.txHash);
+            if (receipt) {
+              const events = parseAllEvents(
+                receipt,
+                (sdk as any).marketplaceAddress,
+                (sdk as any).nftAddress
+              );
+              
+              if (events.purchased) {
+                console.log("✅ Re-applying pending purchase update:", update.txHash);
+                
+                // Re-apply optimistic update
+                setListedDomains(prevListings => 
+                  applyPurchasedUpdate(prevListings, events.purchased!)
+                );
+                setTotalListings(prev => calculateNewListingCountAfterPurchase(prev));
+                
+                // Remove from pending after applying
+                removePendingUpdate(update.txHash);
+              } else if (events.transfers && events.transfers.length > 0) {
+                // Fallback: If we have transfers, we can infer a purchase happened
+                // Find the listing by checking current listings
+                const listingId = update.data.listingId;
+                if (listingId) {
+                  console.log("✅ Re-applying pending purchase update (from transfer):", update.txHash);
+                  setListedDomains(prevListings => 
+                    prevListings.filter(l => l.listingId !== listingId)
+                  );
+                  setTotalListings(prev => Math.max(0, prev - 1));
+                  removePendingUpdate(update.txHash);
+                }
+              }
+            }
+          } else {
+            // Transaction not confirmed, remove from pending
+            console.warn("⚠️ Pending update transaction not confirmed, removing:", update.txHash);
+            removePendingUpdate(update.txHash);
+          }
+        } catch (error) {
+          console.error("Error applying pending update:", error);
+          // Keep it in pending for next time
+        }
+      }
+    };
+    
+    applyPendingUpdates();
+  }, [sdk, account]);
+
   // Load first page when SDK is available (single query optimization)
   // This is the primary data load - count will be loaded in background
   useEffect(() => {
     if (sdk && !isLoadingPageRef.current && currentPage === 1 && listedDomains.length === 0) {
-      console.log("Marketplace: SDK available, loading first page (single query)");
       loadCurrentPage();
     }
   }, [sdk, currentPage, listedDomains.length, loadCurrentPage]);
@@ -281,7 +335,6 @@ const Marketplace: React.FC = () => {
   // Load page when currentPage changes (but not on initial load)
   useEffect(() => {
     if (sdk && currentPage > 1 && !isLoadingPageRef.current) {
-      console.log("Marketplace: Loading page", currentPage);
       loadCurrentPage();
     }
   }, [sdk, currentPage, loadCurrentPage]);
@@ -309,8 +362,6 @@ const Marketplace: React.FC = () => {
         setTxStatus('signature');
 
         try {
-          console.log(`Starting purchase for listing ${listing.listingId}...`);
-          
           // Track transaction: signature phase (user needs to sign in wallet)
           setTxStatus('signature');
           
@@ -337,11 +388,18 @@ const Marketplace: React.FC = () => {
           setTxStatus(null);
 
           if (txHash && purchasedEvent) {
-            console.log(`Purchase successful! Transaction: ${txHash}`);
-            console.log(`Parsed purchased event:`, purchasedEvent);
-            
             // OPTIMISTIC UPDATE: Immediately update UI with parsed event data
-            console.log("Applying optimistic update for purchase...");
+            console.log("✅ Optimistic Update: Purchase successful!", { txHash, listingId: purchasedEvent.listingId });
+            
+            // Store pending update for persistence across page refreshes
+            console.log('💾 [PERSISTENT UPDATE] Storing purchase update for persistence...');
+            storePendingUpdate({
+              type: 'purchase',
+              txHash,
+              data: {
+                listingId: purchasedEvent.listingId,
+              },
+            });
             
             // Remove purchased listing from current view
             setListedDomains(prevListings => 
@@ -361,13 +419,18 @@ const Marketplace: React.FC = () => {
             // Background sync: Verify with subgraph after delay (non-blocking)
             // This ensures data consistency but doesn't block the UI
             setTimeout(async () => {
-              console.log("Background: Syncing with subgraph to verify purchase...");
+              console.log("🔄 Background Sync: Verifying purchase with subgraph...");
+              console.log(`🔄 [PERSISTENT UPDATE] Starting background sync for ${txHash}...`);
               (sdk as any).clearCaches();
               isLoadingCountRef.current = false;
               isLoadingPageRef.current = false;
               hasLoadedCountRef.current = false;
               await loadTotalCount();
               await loadCurrentPage();
+              
+              // Remove pending update after successful sync
+              console.log(`🗑️ [PERSISTENT UPDATE] Background sync completed, removing pending update for ${txHash}`);
+              removePendingUpdate(txHash);
             }, 30000); // Wait 30 seconds for subgraph to index
           } else if (txHash) {
             // Transaction succeeded but couldn't parse event - fallback to old behavior

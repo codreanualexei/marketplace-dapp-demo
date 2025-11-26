@@ -8,6 +8,17 @@ import Pagination from "../Components/Pagination";
 import { useNFTMetadata, getTokenURI } from "../hooks/useNFTMetadata";
 import { NFTMetadataDisplay } from "../Components/NFTMetadata";
 import ConfirmationModal from "../Components/ConfirmationModal";
+import {
+  applyApprovalUpdate,
+  applyListingUpdate,
+} from "../utils/optimisticUpdates";
+import {
+  storePendingUpdate,
+  getPendingUpdates,
+  removePendingUpdate,
+  isTransactionConfirmed,
+} from "../utils/persistentOptimisticUpdates";
+import { parseAllEvents } from "../utils/eventParser";
 import "./MyDomains.css";
 
 // Helper function to get domain name from tokenURI
@@ -214,17 +225,10 @@ const MyDomains: React.FC = () => {
       return;
     }
     
-    console.log(`Checking approval status for ${domains.length} domains using batch method...`);
-    const startTime = Date.now();
-    
     try {
       // Use optimized batch method (checks isApprovedForAll once, then individual tokens if needed)
       const tokenIds = domains.map(domain => domain.tokenId);
       const approvalMap = await sdk.batchCheckTokenApprovals(tokenIds);
-      
-      const endTime = Date.now();
-      console.log(`Batch approval check completed in ${endTime - startTime}ms`);
-      console.log('Final approval status map:', approvalMap);
       
       setTokenApprovalStatus(approvalMap);
     } catch (error) {
@@ -254,20 +258,9 @@ const MyDomains: React.FC = () => {
     setTokenApprovalStatus({});
 
     try {
-      console.log("Loading domains using subgraph...", { account });
-      const startTime = Date.now();
-      
       const domains = await sdk.getMyDomainsFromCollection();
       
-      const endTime = Date.now();
-      console.log(`Loaded ${domains.length} domains in ${endTime - startTime}ms`);
-      console.log("Domains data:", domains);
-      
       if (domains.length === 0) {
-        console.warn("No domains found. This could mean:");
-        console.warn("1. You don't own any NFTs in this collection");
-        console.warn("2. The subgraph hasn't indexed your tokens yet");
-        console.warn("3. There's an issue with the subgraph query");
         // No domains, so no need to check approvals
         setIsLoadingApprovals(false);
         setMyDomains(domains);
@@ -294,6 +287,98 @@ const MyDomains: React.FC = () => {
       setIsLoading(false);
     }
   }, [sdk, account, checkApprovalStatusForAll]);
+
+  // Check and re-apply pending optimistic updates on mount
+  useEffect(() => {
+    const applyPendingUpdates = async () => {
+      if (!sdk || !account) {
+        console.log('⏸️ [PERSISTENT UPDATE] Skipping check - SDK or account not available');
+        return;
+      }
+      
+      console.log('🔄 [PERSISTENT UPDATE] Checking for pending domain updates on page load...');
+      const allPending = getPendingUpdates();
+      const pending = allPending.filter(
+        u => u.type === 'approve' || u.type === 'list'
+      );
+      
+      if (pending.length === 0) {
+        console.log('✅ [PERSISTENT UPDATE] No pending domain updates found');
+        return;
+      }
+      
+      console.log(`🔄 [PERSISTENT UPDATE] Found ${pending.length} pending domain update(s), verifying...`);
+      
+      for (const update of pending) {
+        try {
+          console.log(`🔍 [PERSISTENT UPDATE] Processing update:`, {
+            type: update.type,
+            txHash: update.txHash,
+            tokenId: update.data.tokenId,
+            age: `${Math.round((Date.now() - update.timestamp) / 1000)}s old`
+          });
+          
+          const provider = (sdk as any).signer?.provider || (sdk as any).provider;
+          const isConfirmed = await isTransactionConfirmed(update.txHash, provider);
+          
+          if (isConfirmed) {
+            console.log(`📥 [PERSISTENT UPDATE] Fetching receipt for ${update.txHash}...`);
+            const receipt = await provider?.getTransactionReceipt(update.txHash);
+            if (receipt) {
+              console.log(`📄 [PERSISTENT UPDATE] Parsing events from receipt...`);
+              const events = parseAllEvents(
+                receipt,
+                (sdk as any).marketplaceAddress,
+                (sdk as any).nftAddress
+              );
+              
+              if (update.type === 'approve' && events.approval) {
+                const tokenId = update.data.tokenId || events.approval.tokenId;
+                console.log("✅ [PERSISTENT UPDATE] Re-applying pending approval update:", {
+                  txHash: update.txHash,
+                  tokenId: tokenId,
+                  action: 'Updating approval status to true'
+                });
+                setTokenApprovalStatus(prev => applyApprovalUpdate(prev, tokenId));
+                console.log("✅ [PERSISTENT UPDATE] Approval update re-applied successfully");
+                removePendingUpdate(update.txHash);
+              } else if (update.type === 'list' && events.listed) {
+                const tokenId = update.data.tokenId || events.listed.tokenId;
+                console.log("✅ [PERSISTENT UPDATE] Re-applying pending listing update:", {
+                  txHash: update.txHash,
+                  tokenId: tokenId,
+                  listingId: events.listed.listingId,
+                  action: 'Removing domain from owned list'
+                });
+                setMyDomains(prevDomains => 
+                  applyListingUpdate(prevDomains, tokenId)
+                );
+                console.log("✅ [PERSISTENT UPDATE] Listing update re-applied successfully");
+                removePendingUpdate(update.txHash);
+              } else {
+                console.warn(`⚠️ [PERSISTENT UPDATE] Expected event not found for ${update.type}, keeping in pending`);
+              }
+            } else {
+              console.warn(`⚠️ [PERSISTENT UPDATE] Could not fetch receipt for ${update.txHash}, keeping in pending`);
+            }
+          } else {
+            console.warn("⚠️ [PERSISTENT UPDATE] Transaction not confirmed, removing from pending:", {
+              txHash: update.txHash,
+              type: update.type,
+              reason: 'Transaction not confirmed or failed'
+            });
+            removePendingUpdate(update.txHash);
+          }
+        } catch (error) {
+          console.error(`❌ [PERSISTENT UPDATE] Error applying pending update ${update.txHash}:`, error);
+        }
+      }
+      
+      console.log('✅ [PERSISTENT UPDATE] Finished processing all pending domain updates');
+    };
+    
+    applyPendingUpdates();
+  }, [sdk, account]);
 
   // Load domains when component mounts and SDK is available
   useEffect(() => {
@@ -357,7 +442,8 @@ const MyDomains: React.FC = () => {
             setTxStatus('confirming');
           }, 3000);
           
-          const txHash = await sdk.approveTokenForSale(tokenId);
+          // Use new method that returns receipt and parsed events
+          const { txHash, approvalEvent } = await (sdk as any).approveTokenForSaleWithReceipt(tokenId);
           
           clearTimeout(submittingTimeout);
           clearTimeout(confirmingTimeout);
@@ -365,7 +451,41 @@ const MyDomains: React.FC = () => {
           setIsAwaitingSignature(false);
           setTxStatus(null);
 
-          if (txHash) {
+          if (txHash && approvalEvent) {
+            // OPTIMISTIC UPDATE: Immediately update UI with parsed event data
+            console.log("✅ Optimistic Update: Token approved!", { txHash, tokenId: approvalEvent.tokenId });
+            
+            // Store pending update for persistence across page refreshes
+            console.log('💾 [PERSISTENT UPDATE] Storing approval update for persistence...');
+            storePendingUpdate({
+              type: 'approve',
+              txHash,
+              data: {
+                tokenId: approvalEvent.tokenId,
+              },
+            });
+            
+            // Update approval status immediately using helper function
+            setTokenApprovalStatus(prev => applyApprovalUpdate(prev, tokenId));
+            
+            // Show success message immediately
+            showSuccess(
+              "Domain Approved! ✅",
+              `${domainName} has been approved for marketplace listing.`,
+              txHash
+            );
+            
+            // Background sync: Verify with subgraph after delay (non-blocking)
+            setTimeout(async () => {
+              console.log("🔄 Background Sync: Verifying approval status...");
+              console.log(`🔄 [PERSISTENT UPDATE] Starting background sync for ${txHash}...`);
+              await checkApprovalStatus(tokenId);
+              console.log(`🗑️ [PERSISTENT UPDATE] Background sync completed, removing pending update for ${txHash}`);
+              removePendingUpdate(txHash);
+            }, 30000); // Wait 30 seconds for subgraph to index
+          } else if (txHash) {
+            // Transaction succeeded but couldn't parse event - fallback to old behavior
+            console.warn("Approval succeeded but couldn't parse event, using fallback refresh");
             showSuccess(
               "Domain Approved! ✅",
               `${domainName} has been approved for marketplace listing.`,
@@ -420,7 +540,8 @@ const MyDomains: React.FC = () => {
             setTxStatus('confirming');
           }, 3000);
           
-          const txHash = await sdk.listTokenDirect(tokenId, listPrice);
+          // Use new method that returns receipt and parsed events
+          const { txHash, listedEvent, transfers } = await (sdk as any).listTokenDirectWithReceipt(tokenId, listPrice);
           
           clearTimeout(submittingTimeout);
           clearTimeout(confirmingTimeout);
@@ -428,7 +549,47 @@ const MyDomains: React.FC = () => {
           setIsAwaitingSignature(false);
           setTxStatus(null);
 
-          if (txHash) {
+          if (txHash && listedEvent) {
+            // OPTIMISTIC UPDATE: Immediately update UI with parsed event data
+            console.log("✅ Optimistic Update: Domain listed!", { txHash, listingId: listedEvent.listingId, tokenId: listedEvent.tokenId, price: listedEvent.price });
+            
+            // Store pending update for persistence across page refreshes
+            storePendingUpdate({
+              type: 'list',
+              txHash,
+              data: {
+                listingId: listedEvent.listingId,
+                tokenId: listedEvent.tokenId,
+                price: listedEvent.price,
+              },
+            });
+            
+            // Remove listed domain from owned domains (it's now owned by marketplace)
+            setMyDomains(prevDomains => 
+              applyListingUpdate(prevDomains, tokenId)
+            );
+            
+            // Show success message immediately
+            showSuccess(
+              "Domain Listed! 🚀",
+              `${domainName} has been listed for ${listPrice} ${NETWORK_CONFIG.nativeCurrency.symbol}.`,
+              txHash
+            );
+            setListingTokenId(null);
+            setListPrice("");
+            
+            // Background sync: Verify with subgraph after delay (non-blocking)
+            setTimeout(async () => {
+              console.log("🔄 Background Sync: Verifying listing with subgraph...");
+              console.log(`🔄 [PERSISTENT UPDATE] Starting background sync for ${txHash}...`);
+              (sdk as any).clearCaches();
+              await loadMyDomains();
+              console.log(`🗑️ [PERSISTENT UPDATE] Background sync completed, removing pending update for ${txHash}`);
+              removePendingUpdate(txHash);
+            }, 30000); // Wait 30 seconds for subgraph to index
+          } else if (txHash) {
+            // Transaction succeeded but couldn't parse event - fallback to old behavior
+            console.warn("Listing succeeded but couldn't parse event, using fallback refresh");
             showSuccess(
               "Domain Listed! 🚀",
               `${domainName} has been listed for ${listPrice} ${NETWORK_CONFIG.nativeCurrency.symbol}.`,

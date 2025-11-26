@@ -141,9 +141,6 @@ export class MarketplaceSDK {
   // Buy a listed token
   async buyToken(listingId: number): Promise<string | null> {
     try {
-      this.log(`Starting purchase process for listing ${listingId}...`);
-      this.log(`Wallet provider: ${this.signer.provider?.constructor.name || 'Unknown'}`);
-      
       // Get listing details using read contract
       const listing = await this.marketplaceContract.getListing(listingId);
       const { price, active } = listing;
@@ -153,12 +150,8 @@ export class MarketplaceSDK {
         return null;
       }
 
-      this.log(`Listing details: Price=${ethers.formatEther(price)} MATIC, Active=${active}`);
-
       // Additional validation: Check if the marketplace actually holds the NFT
       const nftOwner = await this.nftContract.ownerOf(listing.tokenId);
-      this.log(`NFT owner: ${nftOwner}`);
-      this.log(`Marketplace address: ${this.marketplaceAddress}`);
       
       if (nftOwner.toLowerCase() !== this.marketplaceAddress.toLowerCase()) {
         this.error(`NFT is not held by marketplace. Owner: ${nftOwner}, Marketplace: ${this.marketplaceAddress}`);
@@ -175,14 +168,12 @@ export class MarketplaceSDK {
       // Additional validation: Check royalty info to see if there might be issues
       try {
         const royaltyInfo = await this.nftContract.royaltyInfo(listing.tokenId, price);
-        this.log(`Royalty info: receiver=${royaltyInfo[0]}, amount=${ethers.formatEther(royaltyInfo[1])} MATIC`);
-        
         // Check if royalty receiver is a valid address
         if (royaltyInfo[0] === '0x0000000000000000000000000000000000000000' && royaltyInfo[1] > 0) {
           this.warn("Royalty receiver is zero address but royalty amount > 0 - this might cause issues");
         }
       } catch (royaltyError) {
-        this.warn("Could not fetch royalty info:", royaltyError);
+        // Silently continue - royalty info is optional
       }
 
       // Check if user has sufficient balance (read operation)
@@ -195,40 +186,19 @@ export class MarketplaceSDK {
       // Estimate gas first using wallet provider (needs to simulate transaction)
       let gasEstimate;
       try {
-        this.log("Attempting gas estimation...");
         gasEstimate = await this.marketplaceContractWrite.buy.estimateGas(listingId, {
           value: price,
         });
-        this.log(`Gas estimate successful: ${gasEstimate.toString()}`);
       } catch (gasError: any) {
-        this.error("Gas estimation failed:", gasError);
-        this.error("Gas estimation error details:", {
-          message: gasError.message,
-          code: gasError.code,
-          reason: gasError.reason,
-          data: gasError.data
-        });
-        
         // If gas estimation fails, use a more generous default gas limit
         // The buy function involves multiple operations: royalty payment, seller payment, NFT transfer, sale recording
         // Use a higher default to ensure transaction success
         gasEstimate = BigInt(1000000); // Increased default gas limit for complex buy operation
-        this.warn(`Using generous default gas limit: ${gasEstimate.toString()} due to estimation failure`);
-        this.warn("This is normal for complex transactions - the actual gas used will be much lower");
+        this.warn(`Using default gas limit: ${gasEstimate.toString()} due to estimation failure`);
       }
 
       // Calculate optimal gas settings
       const gasSettings = await this.calculateOptimalGasSettings(gasEstimate, 'buy');
-
-      this.log(`Buying token for ${ethers.formatEther(price)} MATIC with gas limit ${gasSettings.gasLimit.toString()}...`);
-      this.log(`Contract address: ${this.marketplaceAddress}`);
-      this.log(`Sending transaction using wallet provider: ${this.signer.provider?.constructor.name}`);
-      this.log(`Gas settings:`, {
-        gasLimit: gasSettings.gasLimit.toString(),
-        gasPrice: gasSettings.gasPrice?.toString(),
-        maxFeePerGas: gasSettings.maxFeePerGas?.toString(),
-        maxPriorityFeePerGas: gasSettings.maxPriorityFeePerGas?.toString()
-      });
       
       // Send transaction with optimal gas settings using wallet provider (for signing)
       // The contract requires exact amount: require(msg.value == L.price, "bad value");
@@ -237,14 +207,10 @@ export class MarketplaceSDK {
         ...gasSettings, // Spread gas settings (gasLimit, maxFeePerGas, maxPriorityFeePerGas)
       });
 
-      this.log(`Transaction sent: ${tx.hash}`);
-      this.log("Waiting for transaction confirmation...");
-
       // Wait for transaction with longer timeout for WalletConnect
       // WalletConnect transactions can take longer, so we increase the timeout
       let receipt;
       try {
-        this.log("Waiting for transaction confirmation...");
         receipt = await Promise.race([
           tx.wait(2), // Wait for 2 confirmations
           new Promise((_, reject) => 
@@ -256,19 +222,15 @@ export class MarketplaceSDK {
         
         // If waiting fails, try to get the transaction status directly
         try {
-          this.log("Attempting to get transaction status directly...");
           const txStatus = await this.signer.provider!.getTransactionReceipt(tx.hash);
           if (txStatus) {
             receipt = txStatus;
-            this.log("Got transaction receipt directly:", txStatus);
           } else {
             // Transaction might still be pending
-            this.log("Transaction is still pending, checking status...");
             const txDetails = await this.signer.provider!.getTransaction(tx.hash);
             if (txDetails && txDetails.blockNumber) {
               // Transaction is confirmed, try to get receipt again
               receipt = await this.signer.provider!.getTransactionReceipt(tx.hash);
-              this.log("Got receipt after confirmation:", receipt);
             } else {
               throw new Error("Transaction is still pending or failed");
             }
@@ -278,12 +240,10 @@ export class MarketplaceSDK {
           
           // Final fallback: Check if the NFT ownership changed (transaction succeeded)
           try {
-            this.log("Checking if NFT ownership changed as fallback verification...");
             const userAddress = await this.signer.getAddress();
             const newOwner = await this.nftContract.ownerOf(listing.tokenId);
             
             if (newOwner.toLowerCase() === userAddress.toLowerCase()) {
-              this.log("NFT ownership verification: Transaction succeeded! User now owns the NFT.");
               // Return the transaction hash even though we couldn't get the receipt
               return tx.hash;
             } else {
@@ -301,27 +261,13 @@ export class MarketplaceSDK {
         throw new Error("Transaction receipt not received");
       }
 
-      this.log("Transaction receipt received:", receipt);
-
       // Check if transaction was successful
       if (receipt.status === 0) {
         this.error("Transaction failed on blockchain");
-        this.error("Transaction receipt:", receipt);
-        
-        // Try to get more details about the failure
-        try {
-          const txDetails = await this.signer.provider!.getTransaction(tx.hash);
-          this.error("Transaction details:", txDetails);
-        } catch (txError) {
-          this.error("Could not get transaction details:", txError);
-        }
-        
         throw new Error("Transaction failed on blockchain. Check the logs for details.");
       }
 
-      this.log(`Purchase successful! Transaction: ${receipt.hash}`);
-      this.log(`Gas used: ${receipt.gasUsed.toString()}`);
-      this.log(`Block number: ${receipt.blockNumber}`);
+      this.log(`✅ Purchase successful! Transaction: ${receipt.hash}`);
       return receipt.hash;
     } catch (error: any) {
       this.error("Error purchasing token:", error);
@@ -796,6 +742,43 @@ export class MarketplaceSDK {
       } else {
         throw new Error(`Failed to list domain: ${error.message || "Unknown error"}`);
       }
+    }
+  }
+
+  /**
+   * List token direct with receipt and parsed events (for optimistic updates)
+   * Assumes token is already approved
+   */
+  async listTokenDirectWithReceipt(tokenId: number, price: string): Promise<{
+    txHash: string;
+    receipt: ethers.TransactionReceipt;
+    listedEvent: ParsedListedEvent | null;
+    transfers: ParsedTransferEvent[];
+  }> {
+    try {
+      const txHash = await this.listTokenDirect(tokenId, price);
+      if (!txHash) {
+        throw new Error("Transaction failed");
+      }
+
+      // Get receipt
+      const receipt = await this.signer.provider!.getTransactionReceipt(txHash);
+      if (!receipt) {
+        throw new Error("Could not get transaction receipt");
+      }
+
+      // Parse events
+      const events = parseAllEvents(receipt, this.marketplaceAddress, this.nftAddress);
+
+      return {
+        txHash,
+        receipt,
+        listedEvent: events.listed || null,
+        transfers: events.transfers || [],
+      };
+    } catch (error: any) {
+      this.error("Error in listTokenDirectWithReceipt:", error);
+      throw error;
     }
   }
 
@@ -2064,6 +2047,41 @@ export class MarketplaceSDK {
       } else {
         throw new Error(`Failed to withdraw from splitter: ${err.message || "Unknown error"}`);
       }
+    }
+  }
+
+  /**
+   * Withdraw royalty from splitter with receipt and parsed events (for optimistic updates)
+   */
+  async withdrawRoyaltyFromSplitterWithReceipt(splitterAddress: string): Promise<{
+    txHash: string;
+    receipt: ethers.TransactionReceipt;
+    result: {
+      splitter: string;
+      transactionHash: string;
+      withdrawn: string;
+    };
+  }> {
+    try {
+      const result = await this.withdrawRoyaltyFromSplitter(splitterAddress);
+      if (!result) {
+        throw new Error("Transaction failed");
+      }
+
+      // Get receipt
+      const receipt = await this.signer.provider!.getTransactionReceipt(result.transactionHash);
+      if (!receipt) {
+        throw new Error("Could not get transaction receipt");
+      }
+
+      return {
+        txHash: result.transactionHash,
+        receipt,
+        result,
+      };
+    } catch (error: any) {
+      this.error("Error in withdrawRoyaltyFromSplitterWithReceipt:", error);
+      throw error;
     }
   }
 

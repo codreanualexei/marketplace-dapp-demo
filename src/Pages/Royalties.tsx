@@ -7,6 +7,12 @@ import { ethers } from "ethers";
 import { useNFTMetadata, getTokenURI } from "../hooks/useNFTMetadata";
 import { NFTMetadataDisplay } from "../Components/NFTMetadata";
 import ConfirmationModal from "../Components/ConfirmationModal";
+import {
+  storePendingUpdate,
+  getPendingUpdates,
+  removePendingUpdate,
+  isTransactionConfirmed,
+} from "../utils/persistentOptimisticUpdates";
 import "./Royalties.css";
 
 // Helper function to get domain name from tokenURI
@@ -172,7 +178,6 @@ const Royalties: React.FC = () => {
     setError(null);
 
     try {
-      console.log("Loading marketplace fees...");
       
       // Load marketplace fees
       try {
@@ -181,11 +186,9 @@ const Royalties: React.FC = () => {
           setMarketplaceFees(ethers.formatEther(fees));
         }
       } catch (feeError) {
-        console.warn("Could not fetch marketplace fees:", feeError);
         setMarketplaceFees("0");
       }
 
-      console.log("Marketplace fees loaded successfully");
     } catch (err: any) {
       console.error("Error loading balances:", err);
       setMarketplaceFees("0");
@@ -213,13 +216,11 @@ const Royalties: React.FC = () => {
     setOwnedDomains([]);
 
     try {
-      console.log("Loading created domains (where user is creator) using subgraph...");
       const startTime = Date.now();
 
       // Use subgraph to get created tokens directly (includes splitter data and balances)
       const createdDomains = await sdk.getCreatedTokens(account);
       
-      console.log(`Found ${createdDomains.length} domains created by you via subgraph`);
 
       if (createdDomains.length === 0) {
         setIsLoadingDomains(false);
@@ -249,9 +250,6 @@ const Royalties: React.FC = () => {
       
       setOwnedDomains(sortedDomains);
 
-      const endTime = Date.now();
-      console.log(`Loaded ${sortedDomains.length} created domains in ${endTime - startTime}ms`);
-      console.log(`Domains with royalties: ${sortedDomains.filter(d => d.royaltyBalance && parseFloat(d.royaltyBalance) > 0).length}`);
       
       // Add a small delay to ensure all state updates are complete before showing cards
       // This prevents flickering and weird loading states
@@ -265,6 +263,88 @@ const Royalties: React.FC = () => {
     } finally {
       setIsLoadingDomains(false);
     }
+  }, [sdk, account]);
+
+  // Check and re-apply pending optimistic updates on mount
+  useEffect(() => {
+    const applyPendingUpdates = async () => {
+      if (!sdk || !account) {
+        console.log('⏸️ [PERSISTENT UPDATE] Skipping check - SDK or account not available');
+        return;
+      }
+      
+      console.log('🔄 [PERSISTENT UPDATE] Checking for pending withdrawal updates on page load...');
+      const allPending = getPendingUpdates();
+      const pending = allPending.filter(
+        u => u.type === 'withdraw' || u.type === 'withdrawFees'
+      );
+      
+      if (pending.length === 0) {
+        console.log('✅ [PERSISTENT UPDATE] No pending withdrawal updates found');
+        return;
+      }
+      
+      console.log(`🔄 [PERSISTENT UPDATE] Found ${pending.length} pending withdrawal update(s), verifying...`);
+      
+      for (const update of pending) {
+        try {
+          console.log(`🔍 [PERSISTENT UPDATE] Processing update:`, {
+            type: update.type,
+            txHash: update.txHash,
+            splitterAddress: update.data.splitterAddress,
+            amount: update.data.amount,
+            age: `${Math.round((Date.now() - update.timestamp) / 1000)}s old`
+          });
+          
+          const provider = (sdk as any).signer?.provider || (sdk as any).provider;
+          const isConfirmed = await isTransactionConfirmed(update.txHash, provider);
+          
+          if (isConfirmed) {
+            if (update.type === 'withdraw') {
+              const splitterAddress = update.data.splitterAddress;
+              if (splitterAddress) {
+                console.log("✅ [PERSISTENT UPDATE] Re-applying pending royalty withdrawal:", {
+                  txHash: update.txHash,
+                  splitterAddress: splitterAddress,
+                  amount: update.data.amount,
+                  action: 'Setting royalty balance to 0'
+                });
+                setOwnedDomains(prevDomains =>
+                  prevDomains.map(domain =>
+                    domain.splitterAddress === splitterAddress
+                      ? { ...domain, royaltyBalance: '0' }
+                      : domain
+                  )
+                );
+                console.log("✅ [PERSISTENT UPDATE] Royalty withdrawal re-applied successfully");
+                removePendingUpdate(update.txHash);
+              }
+            } else if (update.type === 'withdrawFees') {
+              console.log("✅ [PERSISTENT UPDATE] Re-applying pending marketplace fees withdrawal:", {
+                txHash: update.txHash,
+                action: 'Setting marketplace fees to 0'
+              });
+              setMarketplaceFees('0');
+              console.log("✅ [PERSISTENT UPDATE] Marketplace fees withdrawal re-applied successfully");
+              removePendingUpdate(update.txHash);
+            }
+          } else {
+            console.warn("⚠️ [PERSISTENT UPDATE] Transaction not confirmed, removing from pending:", {
+              txHash: update.txHash,
+              type: update.type,
+              reason: 'Transaction not confirmed or failed'
+            });
+            removePendingUpdate(update.txHash);
+          }
+        } catch (error) {
+          console.error(`❌ [PERSISTENT UPDATE] Error applying pending update ${update.txHash}:`, error);
+        }
+      }
+      
+      console.log('✅ [PERSISTENT UPDATE] Finished processing all pending withdrawal updates');
+    };
+    
+    applyPendingUpdates();
   }, [sdk, account]);
 
   // Load initial data
@@ -310,7 +390,8 @@ const Royalties: React.FC = () => {
             setTxStatus('confirming');
           }, 3000);
           
-          const result = await sdk.withdrawRoyaltyFromSplitter(splitterAddress);
+          // Use new method that returns receipt and parsed events
+          const { txHash, result } = await (sdk as any).withdrawRoyaltyFromSplitterWithReceipt(splitterAddress);
           
           clearTimeout(submittingTimeout);
           clearTimeout(confirmingTimeout);
@@ -318,11 +399,53 @@ const Royalties: React.FC = () => {
           setIsAwaitingSignature(false);
           setTxStatus(null);
 
-          if (result) {
+          if (txHash && result) {
+            // OPTIMISTIC UPDATE: Immediately update UI with withdrawal data
+            console.log("✅ Optimistic Update: Royalty withdrawn!", { txHash, amount: result.withdrawn, splitter: splitterAddress });
+            
+            // Store pending update for persistence across page refreshes
+            console.log('💾 [PERSISTENT UPDATE] Storing royalty withdrawal update for persistence...');
+            storePendingUpdate({
+              type: 'withdraw',
+              txHash,
+              data: {
+                splitterAddress,
+                amount: result.withdrawn,
+              },
+            });
+            
+            // Update domain's royalty balance to 0 (withdrawn)
+            setOwnedDomains(prevDomains =>
+              prevDomains.map(domain =>
+                domain.splitterAddress === splitterAddress
+                  ? { ...domain, royaltyBalance: '0' }
+                  : domain
+              )
+            );
+            
+            // Show success message immediately
             showSuccess(
               "Withdrawal Successful! ✅",
               `Withdrawn ${result.withdrawn} MATIC from ${domainName}`,
-              result.transactionHash
+              txHash
+            );
+            
+            // Background sync: Verify with subgraph after delay (non-blocking)
+            setTimeout(async () => {
+              console.log("🔄 Background Sync: Verifying royalty withdrawal with subgraph...");
+              console.log(`🔄 [PERSISTENT UPDATE] Starting background sync for ${txHash}...`);
+              (sdk as any).clearCaches();
+              await loadOwnedDomains();
+              console.log(`🗑️ [PERSISTENT UPDATE] Background sync completed, removing pending update for ${txHash}`);
+              removePendingUpdate(txHash);
+            }, 30000); // Wait 30 seconds for subgraph to index
+          } else if (txHash) {
+            // Transaction succeeded but couldn't parse event - fallback to old behavior
+            console.warn("Withdrawal succeeded but couldn't parse event, using fallback refresh");
+            showSuccess(
+              "Withdrawal Successful! ✅",
+              `Withdrawn from ${domainName}`,
+              txHash
             );
             // Refresh created domains
             await loadOwnedDomains();
@@ -365,7 +488,8 @@ const Royalties: React.FC = () => {
             setTxStatus('confirming');
           }, 3000);
           
-          const txHash = await sdk.withdrawMarketPlaceFees();
+          // Use new method that returns receipt and parsed events
+          const { txHash, feeWithdrawnEvent } = await (sdk as any).withdrawMarketPlaceFeesWithReceipt();
           
           clearTimeout(submittingTimeout);
           clearTimeout(confirmingTimeout);
@@ -374,12 +498,36 @@ const Royalties: React.FC = () => {
           setTxStatus(null);
 
           if (txHash) {
+            // OPTIMISTIC UPDATE: Immediately update UI
+            console.log("✅ Optimistic Update: Marketplace fees withdrawn!", { txHash });
+            
+            // Store pending update for persistence across page refreshes
+            console.log('💾 [PERSISTENT UPDATE] Storing marketplace fees withdrawal update for persistence...');
+            storePendingUpdate({
+              type: 'withdrawFees',
+              txHash,
+              data: {},
+            });
+            
+            // Update marketplace fees balance to 0 (withdrawn)
+            setMarketplaceFees('0');
+            
+            // Show success message immediately
             showSuccess(
               "Marketplace Fees Withdrawn! ✅",
               `Successfully withdrew marketplace fees`,
               txHash
             );
-            await loadBalances();
+            
+            // Background sync: Verify with subgraph after delay (non-blocking)
+            setTimeout(async () => {
+              console.log("🔄 Background Sync: Verifying marketplace fees withdrawal with subgraph...");
+              console.log(`🔄 [PERSISTENT UPDATE] Starting background sync for ${txHash}...`);
+              (sdk as any).clearCaches();
+              await loadBalances();
+              console.log(`🗑️ [PERSISTENT UPDATE] Background sync completed, removing pending update for ${txHash}`);
+              removePendingUpdate(txHash);
+            }, 30000); // Wait 30 seconds for subgraph to index
           } else {
             showError(
               "Withdrawal Failed", 
