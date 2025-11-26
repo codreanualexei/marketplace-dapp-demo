@@ -4,6 +4,17 @@ import MarketplaceJSON from "../contracts/abis/Marketplace.json";
 import StrDomainsNFTJSON from "../contracts/abis/StrDomainsNFT.json";
 import RoyaltySplitterJSON from "../contracts/abis/RoyaltySplitter.json";
 import { NETWORK_CONFIG, getWalletNetworkConfig, validateNetworkConfig } from "../config/network";
+import {
+  parseAllEvents,
+  ParsedPurchasedEvent,
+  ParsedListedEvent,
+  ParsedListingUpdatedEvent,
+  ParsedListingCanceledEvent,
+  ParsedFeeWithdrawnEvent,
+  ParsedApprovalEvent,
+  ParsedTransferEvent,
+  ParsedMintedEvent,
+} from "../utils/eventParser";
 
 // Extract ABIs from Hardhat artifact JSON files
 const MarketplaceABI = MarketplaceJSON.abi;
@@ -330,9 +341,7 @@ export class MarketplaceSDK {
       } else if (error.message?.includes("gas")) {
         throw new Error("Gas estimation failed. Please try again or increase gas limit.");
       } else if (error.message?.includes("network") || error.code === 'NETWORK_ERROR') {
-        //throw new Error("Network error. Please check your connection and try again.");
         throw new Error(error);
-
       } else if (error.message?.includes("timeout")) {
         throw new Error("Transaction timeout. The transaction may still be processing. Please check your wallet or try again.");
       } else if (error.code === 'UNPREDICTABLE_GAS_LIMIT') {
@@ -344,6 +353,42 @@ export class MarketplaceSDK {
       } else {
         throw new Error(`Purchase failed: ${error.message || "Unknown error"}`);
       }
+    }
+  }
+
+  /**
+   * Buy token with receipt and parsed events (for optimistic updates)
+   */
+  async buyTokenWithReceipt(listingId: number): Promise<{
+    txHash: string;
+    receipt: ethers.TransactionReceipt;
+    purchasedEvent: ParsedPurchasedEvent | null;
+    transfers: ParsedTransferEvent[];
+  }> {
+    try {
+      const txHash = await this.buyToken(listingId);
+      if (!txHash) {
+        throw new Error("Transaction failed");
+      }
+
+      // Get receipt
+      const receipt = await this.signer.provider!.getTransactionReceipt(txHash);
+      if (!receipt) {
+        throw new Error("Could not get transaction receipt");
+      }
+
+      // Parse events
+      const events = parseAllEvents(receipt, this.marketplaceAddress, this.nftAddress);
+
+      return {
+        txHash,
+        receipt,
+        purchasedEvent: events.purchased || null,
+        transfers: events.transfers || [],
+      };
+    } catch (error: any) {
+      this.error("Error in buyTokenWithReceipt:", error);
+      throw error;
     }
   }
 
@@ -479,6 +524,40 @@ export class MarketplaceSDK {
       } else {
         throw new Error(`Failed to update listing: ${error.message || "Unknown error"}`);
       }
+    }
+  }
+
+  /**
+   * Update listing with receipt and parsed events (for optimistic updates)
+   */
+  async updateListingWithReceipt(listingId: number, newPrice: string): Promise<{
+    txHash: string;
+    receipt: ethers.TransactionReceipt;
+    listingUpdatedEvent: ParsedListingUpdatedEvent | null;
+  }> {
+    try {
+      const txHash = await this.updateListing(listingId, newPrice);
+      if (!txHash) {
+        throw new Error("Transaction failed");
+      }
+
+      // Get receipt
+      const receipt = await this.signer.provider!.getTransactionReceipt(txHash);
+      if (!receipt) {
+        throw new Error("Could not get transaction receipt");
+      }
+
+      // Parse events
+      const events = parseAllEvents(receipt, this.marketplaceAddress, this.nftAddress);
+
+      return {
+        txHash,
+        receipt,
+        listingUpdatedEvent: events.listingUpdated || null,
+      };
+    } catch (error: any) {
+      this.error("Error in updateListingWithReceipt:", error);
+      throw error;
     }
   }
 
@@ -718,6 +797,37 @@ export class MarketplaceSDK {
         throw new Error(`Failed to list domain: ${error.message || "Unknown error"}`);
       }
     }
+  }
+
+  /**
+   * List token with receipt and parsed events (for optimistic updates)
+   */
+  async listTokenWithReceipt(tokenId: number, price: string): Promise<{
+    txHash: string;
+    receipt: ethers.TransactionReceipt;
+    listedEvent: ParsedListedEvent | null;
+    transfers: ParsedTransferEvent[];
+  }> {
+    const txHash = await this.listToken(tokenId, price);
+    if (!txHash) {
+      throw new Error("Transaction failed");
+    }
+
+    // Get receipt
+    const receipt = await this.signer.provider!.getTransactionReceipt(txHash);
+    if (!receipt) {
+      throw new Error("Could not get transaction receipt");
+    }
+
+    // Parse events
+    const events = parseAllEvents(receipt, this.marketplaceAddress, this.nftAddress);
+
+    return {
+      txHash,
+      receipt,
+      listedEvent: events.listed || null,
+      transfers: events.transfers || [],
+    };
   }
 
   // List a token on the marketplace (legacy method - handles approval automatically)
@@ -970,7 +1080,6 @@ export class MarketplaceSDK {
       const receipt = await tx.wait(2);
       this.log(`Listing ${listingId} cancelled successfully! Transaction: ${receipt.hash}`);
       return receipt.hash;
-      
     } catch (error: any) {
       this.error(`Error cancelling listing ${listingId}:`, error);
       
@@ -982,6 +1091,40 @@ export class MarketplaceSDK {
       } else {
         throw new Error(`Failed to cancel listing: ${error.message || "Please try again."}`);
       }
+    }
+  }
+
+  /**
+   * Cancel listing with receipt and parsed events (for optimistic updates)
+   */
+  async cancelListingWithReceipt(listingId: number): Promise<{
+    txHash: string;
+    receipt: ethers.TransactionReceipt;
+    listingCanceledEvent: ParsedListingCanceledEvent | null;
+  }> {
+    try {
+      const txHash = await this.cancelListing(listingId);
+      if (!txHash) {
+        throw new Error("Transaction failed");
+      }
+
+      // Get receipt
+      const receipt = await this.signer.provider!.getTransactionReceipt(txHash);
+      if (!receipt) {
+        throw new Error("Could not get transaction receipt");
+      }
+
+      // Parse events
+      const events = parseAllEvents(receipt, this.marketplaceAddress, this.nftAddress);
+
+      return {
+        txHash,
+        receipt,
+        listingCanceledEvent: events.listingCanceled || null,
+      };
+    } catch (error: any) {
+      this.error("Error in cancelListingWithReceipt:", error);
+      throw error;
     }
   }
 
@@ -1528,6 +1671,35 @@ export class MarketplaceSDK {
     }
   }
 
+  /**
+   * Approve token with receipt and parsed events (for optimistic updates)
+   */
+  async approveTokenForSaleWithReceipt(tokenId: number): Promise<{
+    txHash: string;
+    receipt: ethers.TransactionReceipt;
+    approvalEvent: ParsedApprovalEvent | null;
+  }> {
+    const txHash = await this.approveTokenForSale(tokenId);
+    if (!txHash) {
+      throw new Error("Transaction failed");
+    }
+
+    // Get receipt
+    const receipt = await this.signer.provider!.getTransactionReceipt(txHash);
+    if (!receipt) {
+      throw new Error("Could not get transaction receipt");
+    }
+
+    // Parse events
+    const events = parseAllEvents(receipt, this.marketplaceAddress, this.nftAddress);
+
+    return {
+      txHash,
+      receipt,
+      approvalEvent: events.approval || null,
+    };
+  }
+
   // Get available fee balance from a splitter
   async getSplitterBalance(
     splitterAddress: string,
@@ -2035,6 +2207,35 @@ export class MarketplaceSDK {
     }
   }
 
+  /**
+   * Withdraw marketplace fees with receipt and parsed events (for optimistic updates)
+   */
+  async withdrawMarketPlaceFeesWithReceipt(): Promise<{
+    txHash: string;
+    receipt: ethers.TransactionReceipt;
+    feeWithdrawnEvent: ParsedFeeWithdrawnEvent | null;
+  }> {
+    const txHash = await this.withdrawMarketPlaceFees();
+    if (!txHash) {
+      throw new Error("Transaction failed");
+    }
+
+    // Get receipt
+    const receipt = await this.signer.provider!.getTransactionReceipt(txHash);
+    if (!receipt) {
+      throw new Error("Could not get transaction receipt");
+    }
+
+    // Parse events
+    const events = parseAllEvents(receipt, this.marketplaceAddress, this.nftAddress);
+
+    return {
+      txHash,
+      receipt,
+      feeWithdrawnEvent: events.feeWithdrawn || null,
+    };
+  }
+
   // Check if connected wallet is admin
   async isAdmin(): Promise<boolean> {
     try {
@@ -2165,6 +2366,41 @@ export class MarketplaceSDK {
         throw new Error(`Failed to mint domain NFT: ${error.message || "Unknown error"}`);
       }
     }
+  }
+
+  /**
+   * Mint domain with receipt and parsed events (for optimistic updates)
+   */
+  async mintDomainWithReceipt(
+    originalCreator: string,
+    URI: string,
+    domainName: string,
+  ): Promise<{
+    txHash: string;
+    receipt: ethers.TransactionReceipt;
+    mintedEvent: ParsedMintedEvent | null;
+    transfers: ParsedTransferEvent[];
+  }> {
+    const txHash = await this.mintDomain(originalCreator, URI, domainName);
+    if (!txHash) {
+      throw new Error("Transaction failed");
+    }
+
+    // Get receipt
+    const receipt = await this.signer.provider!.getTransactionReceipt(txHash);
+    if (!receipt) {
+      throw new Error("Could not get transaction receipt");
+    }
+
+    // Parse events
+    const events = parseAllEvents(receipt, this.marketplaceAddress, this.nftAddress);
+
+    return {
+      txHash,
+      receipt,
+      mintedEvent: events.minted || null,
+      transfers: events.transfers || [],
+    };
   }
 
   // Simple Network Guard - Forces network change before any transaction

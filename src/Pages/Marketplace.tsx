@@ -8,6 +8,10 @@ import Pagination from "../Components/Pagination";
 import { useNFTMetadata, getTokenURI } from "../hooks/useNFTMetadata";
 import { NFTMetadataDisplay } from "../Components/NFTMetadata";
 import ConfirmationModal from "../Components/ConfirmationModal";
+import {
+  applyPurchasedUpdate,
+  calculateNewListingCountAfterPurchase,
+} from "../utils/optimisticUpdates";
 import "./Marketplace.css";
 
 // Helper function to get domain name from tokenURI
@@ -173,7 +177,7 @@ const Marketplace: React.FC = () => {
       const startTime = Date.now();
       
       // Get just the count without loading all listings
-      const count = await sdk.getActiveListingCountOptimized();
+      const count = await (sdk as any).getActiveListingCountOptimized();
       
       const endTime = Date.now();
       console.log(`Loaded listing count in ${endTime - startTime}ms:`, count);
@@ -207,13 +211,13 @@ const Marketplace: React.FC = () => {
       const startTime = Date.now();
       
       // Use the SDK's optimized page method to get only what we need (single subgraph query)
-      const pageListings = await sdk.getActiveListingsPageOptimized(currentPage, ITEMS_PER_PAGE);
+      const pageListings = await (sdk as any).getActiveListingsPageOptimized(currentPage, ITEMS_PER_PAGE);
       
-      console.log(`SDK returned ${pageListings.length} listings for page ${currentPage}:`, pageListings.map(l => l.listingId));
+      console.log(`SDK returned ${pageListings.length} listings for page ${currentPage}:`, pageListings.map((l: ListedToken) => l.listingId));
 
       // The subgraph already returns tokenData with listings, so we can use them directly
       // Filter out invalid listings and use the data as-is
-      const validListings = pageListings.filter(listing => 
+      const validListings = pageListings.filter((listing: ListedToken) => 
         listing && listing.active && listing.seller && listing.strCollectionAddress && listing.tokenData
       );
       
@@ -321,7 +325,8 @@ const Marketplace: React.FC = () => {
             setTxStatus('confirming');
           }, 3000);
           
-          const txHash = await sdk.buyToken(listing.listingId);
+          // Use new method that returns receipt and parsed events
+          const { txHash, purchasedEvent } = await sdk.buyTokenWithReceipt(listing.listingId);
           
           // Clear timeouts since transaction completed
           clearTimeout(submittingTimeout);
@@ -331,29 +336,54 @@ const Marketplace: React.FC = () => {
           setIsAwaitingSignature(false);
           setTxStatus(null);
 
-          if (txHash) {
+          if (txHash && purchasedEvent) {
             console.log(`Purchase successful! Transaction: ${txHash}`);
+            console.log(`Parsed purchased event:`, purchasedEvent);
+            
+            // OPTIMISTIC UPDATE: Immediately update UI with parsed event data
+            console.log("Applying optimistic update for purchase...");
+            
+            // Remove purchased listing from current view
+            setListedDomains(prevListings => 
+              applyPurchasedUpdate(prevListings, purchasedEvent)
+            );
+            
+            // Update count optimistically
+            setTotalListings(prev => calculateNewListingCountAfterPurchase(prev));
+            
+            // Show success message immediately
             showSuccess(
               "Purchase Successful! 🎉",
               `${domainName} has been purchased successfully.`,
               txHash
             );
             
-            // Clear caches and reload everything after successful purchase
-            console.log("Refreshing marketplace after successful purchase...");
+            // Background sync: Verify with subgraph after delay (non-blocking)
+            // This ensures data consistency but doesn't block the UI
+            setTimeout(async () => {
+              console.log("Background: Syncing with subgraph to verify purchase...");
+              (sdk as any).clearCaches();
+              isLoadingCountRef.current = false;
+              isLoadingPageRef.current = false;
+              hasLoadedCountRef.current = false;
+              await loadTotalCount();
+              await loadCurrentPage();
+            }, 30000); // Wait 30 seconds for subgraph to index
+          } else if (txHash) {
+            // Transaction succeeded but couldn't parse event - fallback to old behavior
+            console.warn("Purchase succeeded but couldn't parse event, using fallback refresh");
+            showSuccess(
+              "Purchase Successful! 🎉",
+              `${domainName} has been purchased successfully.`,
+              txHash
+            );
             
-            // Clear SDK caches to ensure fresh data
-            sdk.clearCaches();
-            
-            // Reset loading refs to force fresh data
+            // Fallback: Clear caches and reload
+            (sdk as any).clearCaches();
             isLoadingCountRef.current = false;
             isLoadingPageRef.current = false;
             hasLoadedCountRef.current = false;
-            
-            // Small delay to ensure blockchain has processed the transaction
             await new Promise(resolve => setTimeout(resolve, 2000));
-            
-            // Reload total count first, then current page
             await loadTotalCount();
             await loadCurrentPage();
           } else {
